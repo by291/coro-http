@@ -7,15 +7,24 @@ on:
 
 jobs:
   build:
-    name: ${{ matrix.os }}
+    name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            name: ubuntu / gcc
+            cxx: g++
+          - os: ubuntu-latest
+            name: ubuntu / clang
+            cxx: clang++
+          - os: macos-latest
+            name: macos / apple clang
+            cxx: clang++
 
     env:
-      # Reuse compiled ports between runs on the same OS.
+      # Reuse compiled ports between runs on the same OS and compiler.
       VCPKG_BINARY_SOURCES: "clear;files,${{ github.workspace }}/.vcpkg-cache,readwrite"
 
     steps:
@@ -31,11 +40,11 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ github.workspace }}/.vcpkg-cache
-          key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}
-          restore-keys: vcpkg-${{ runner.os }}-
+          key: vcpkg-${{ runner.os }}-${{ matrix.cxx }}-${{ hashFiles('vcpkg.json') }}
+          restore-keys: vcpkg-${{ runner.os }}-${{ matrix.cxx }}-
 
       - name: Configure
-        run: cmake --preset ci
+        run: cmake --preset ci -DCMAKE_CXX_COMPILER=${{ matrix.cxx }}
 
       - name: Build
         run: cmake --build --preset ci
@@ -44,7 +53,7 @@ jobs:
         run: ctest --preset ci
 
   sanitizers:
-    name: asan+ubsan (ubuntu)
+    name: asan+ubsan (ubuntu / gcc)
     runs-on: ubuntu-latest
 
     env:

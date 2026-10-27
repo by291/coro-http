@@ -154,6 +154,15 @@ TLS、HTTP/2、WebSocket、静态文件、模板、chunked 请求体、多 react
 - **单线程**：容量边界在内核与一次 `poll` 上；多 reactor 是另一个话题，不在这个 demo 里半途而废。
 - **IPv4 only**：`acceptor` 用 `inet_pton`，够演示，也少一层 IPv6 细节。
 
+## 已知限制
+
+- **GCC 下深链的每跳栈开销**：clang 与 GCC 优化构建中，对称转移不占栈；GCC `-O0`
+  每跳 64 字节，带 sanitizer 时即使 `-O2` 也有 64–71 字节。10 万层在 GCC `-O0` 下
+  需要约 6.4MB 栈，因此日常测试用 5 万层（约 3.2MB）；带 sanitizer 的 GCC 构建里
+  连 5 万层也会跳过。实测数据见 [docs/coroutines.md](docs/coroutines.md)。
+- **挂起链的销毁是递归的**：正常完成时子帧在 `await_resume` 里逐层释放；但一条链
+  若在挂起状态下被销毁，帧析构会沿链递归。本项目实际的 await 链只有三层左右。
+
 ## 一个 ASan 抓到的真实坑
 
 测试里最初这样写：
@@ -171,9 +180,10 @@ spawn(loop, [&]() -> task<void> { co_await loop.sleep_for(1h); }());
 | 平台 | 后端 | 编译器 | 结果 |
 |---|---|---|---|
 | macOS 27.2（Apple Silicon） | kqueue | Apple clang 21 | `dev` / `ci` / `asan` / `tsan` 四套构建各 62/62 |
-| Ubuntu 26.04（独立 Lima VM） | epoll | GCC 15.2 | Release 62/62；Debug 与 ASan 各 62/62（3 条深链测试按上述原因跳过） |
+| Ubuntu 26.04（独立 Lima VM） | epoll | GCC 15.2 | Release 62/62；Debug 62/62（跳过 2 条栈测量）；ASan 62/62（跳过 3 条深链测试） |
 
 - 要求 C++23（协程 + `std::expected`）；Linux 侧 GCC 13+ / Clang 17+。
 - 构建：CMake ≥ 3.25 + vcpkg manifest，presets：`dev` / `release` / `ci` / `asan` / `tsan`。
+- CI 同时跑 GCC 与 clang（Ubuntu 上两个编译器各一套，macOS 用 Apple clang），另加一个 Ubuntu GCC 的 ASan/UBSan job。
 - Linux 验证用的虚拟机是独立实例（`coro-http`），没有动本机已有的环境；
   `limactl start coro-http` 可再次启动。

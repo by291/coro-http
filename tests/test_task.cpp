@@ -153,21 +153,29 @@ TEST_CASE("destroying an unawaited task destroys its frame") {
   REQUIRE(live == 1);  // the frame's copy is gone
 }
 
-// GCC only elides the per-hop stack frame of symmetric transfer in optimised,
-// uninstrumented builds: 64 bytes per hop at -O0, and sanitizer
-// instrumentation keeps it even at -O2. The tests below that need many hops
-// therefore skip there, with the reason attached.
+// Measured per-hop stack cost of symmetric transfer (docs/coroutines.md):
+// clang 0 B, GCC optimised 0 B, GCC -O0 64 B, GCC + sanitizer 64-71 B.
+//
+// Tests that compare stack spread cannot see past GCC's own frames, so they
+// skip wherever GCC keeps them. The plain 50k completion test only needs the
+// per-hop cost to fit in the stack, which it does at -O0 but not once
+// sanitizers enlarge those frames.
+#if defined(__GNUC__) && !defined(__clang__) && !defined(__OPTIMIZE__)
+#define CORO_HTTP_GCC_STACK_SPREAD_UNRELIABLE 1
+#endif
 #if defined(__GNUC__) && !defined(__clang__) &&                                   \
-    (!defined(__OPTIMIZE__) || defined(__SANITIZE_ADDRESS__) ||                   \
-     defined(__SANITIZE_THREAD__))
-#define CORO_HTTP_GCC_MANY_HOPS_UNSAFE 1
+    (defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__))
+#define CORO_HTTP_GCC_SANITIZED 1
+#endif
+#if defined(CORO_HTTP_GCC_STACK_SPREAD_UNRELIABLE) || defined(CORO_HTTP_GCC_SANITIZED)
+#define CORO_HTTP_DEEP_CHAIN_MEASUREMENT_UNSAFE 1
 #endif
 
 TEST_CASE("completing a deep chain does not nest frame destruction") {
-#if defined(CORO_HTTP_GCC_MANY_HOPS_UNSAFE)
+#if defined(CORO_HTTP_DEEP_CHAIN_MEASUREMENT_UNSAFE)
   // On these builds the resumption frames themselves nest, which drowns out
   // any teardown nesting this measures.
-  SKIP("GCC keeps a stack frame per symmetric-transfer hop outside optimised, uninstrumented builds");
+  SKIP("GCC keeps a stack frame per symmetric-transfer hop in this build");
 #else
   teardown_probe::reset();
   REQUIRE(sync_wait(probed_chain(10'000)) == 10'000);
@@ -179,17 +187,17 @@ TEST_CASE("completing a deep chain does not nest frame destruction") {
 #endif
 }
 
-TEST_CASE("completing a 100k-deep chain does not overflow the stack") {
-#if defined(CORO_HTTP_GCC_MANY_HOPS_UNSAFE)
-  SKIP("GCC keeps a stack frame per symmetric-transfer hop outside optimised, uninstrumented builds");
+TEST_CASE("completing a 50k-deep chain does not overflow the stack") {
+#if defined(CORO_HTTP_GCC_SANITIZED)
+  SKIP("sanitizer instrumentation keeps GCC's per-hop frame, and 50k of them exceed the stack");
 #else
-  REQUIRE(sync_wait(recursive_chain(100'000)) == 100'000);
+  REQUIRE(sync_wait(recursive_chain(50'000)) == 50'000);
 #endif
 }
 
 TEST_CASE("awaiting a deep chain does not grow the call stack") {
-#if defined(CORO_HTTP_GCC_MANY_HOPS_UNSAFE)
-  SKIP("GCC keeps a stack frame per symmetric-transfer hop outside optimised, uninstrumented builds");
+#if defined(CORO_HTTP_DEEP_CHAIN_MEASUREMENT_UNSAFE)
+  SKIP("GCC keeps a stack frame per symmetric-transfer hop in this build");
 #else
   // Compare where the stack sits at the deepest point of a short chain and a
   // much longer one. With symmetric transfer both hops land at the same

@@ -87,8 +87,17 @@ handler 三层左右）。
 10 万层在 GCC `-O0` 下需要 6.4MB 栈，会爆；在 clang 或 GCC 优化构建下没问题。
 
 这不是本项目的实现问题（`await_suspend` 返回下一个句柄就是标准要求的对称转移写法），
-而是 GCC 的代码生成特性。因此三条深链测试在 GCC 的非优化或带 sanitizer 构建里会
-`SKIP`，并在原因里写明；CI 的 Release job 与 macOS 的 ASan/TSan job 会真正执行它们。
+而是 GCC 的代码生成特性。
+
+测试因此这样安排：
+
+- 深链完成测试取 **5 万层**：GCC `-O0` 下约 3.2MB 栈，能过；10 万层需要约 6.4MB，会爆，
+  所以不作为日常测试深度（这个结论保留在本文档里）。带 sanitizer 的 GCC 构建里
+  连 5 万层都放不下，该测试跳过。
+- 两套「直接测量栈差」的测试（恢复路径、析构嵌套）在 GCC 的非优化或 sanitizer
+  构建里会 `SKIP`，因为 GCC 自己的每跳栈帧会淹没被测信号。
+
+CI 的 Release job 与 macOS 的 ASan/TSan job 会真正执行全部深链测试。
 
 ## IO 等待是如何接进事件循环的
 
