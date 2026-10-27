@@ -153,29 +153,35 @@ TEST_CASE("destroying an unawaited task destroys its frame") {
   REQUIRE(live == 1);  // the frame's copy is gone
 }
 
-// Measured per-hop stack cost of symmetric transfer (docs/coroutines.md):
-// clang 0 B, GCC optimised 0 B, GCC -O0 64 B, GCC + sanitizer 64-71 B.
-//
-// Tests that compare stack spread cannot see past GCC's own frames, so they
-// skip wherever GCC keeps them. The plain 50k completion test only needs the
-// per-hop cost to fit in the stack, which it does at -O0 but not once
-// sanitizers enlarge those frames.
-#if defined(__GNUC__) && !defined(__clang__) && !defined(__OPTIMIZE__)
-#define CORO_HTTP_GCC_STACK_SPREAD_UNRELIABLE 1
+// Sanitizer instrumentation perturbs stack-address measurements on both
+// compilers, and GCC -O0 keeps a 64-byte frame per symmetric-transfer hop.
+// Tests that compare stack spread skip in those builds; the coarse 50k
+// completion test only skips where GCC + sanitizer cannot fit it at all.
+#if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__)
+#define CORO_HTTP_SANITIZED 1
 #endif
-#if defined(__GNUC__) && !defined(__clang__) &&                                   \
-    (defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__))
-#define CORO_HTTP_GCC_SANITIZED 1
+#ifndef CORO_HTTP_SANITIZED
+#if defined(__has_feature)
+#if __has_feature(address_sanitizer) || __has_feature(thread_sanitizer)
+#define CORO_HTTP_SANITIZED 1
 #endif
-#if defined(CORO_HTTP_GCC_STACK_SPREAD_UNRELIABLE) || defined(CORO_HTTP_GCC_SANITIZED)
+#endif
+#endif
+
+#if defined(CORO_HTTP_SANITIZED) || \
+    (defined(__GNUC__) && !defined(__clang__) && !defined(__OPTIMIZE__))
 #define CORO_HTTP_DEEP_CHAIN_MEASUREMENT_UNSAFE 1
+#endif
+
+#if defined(CORO_HTTP_SANITIZED) && defined(__GNUC__) && !defined(__clang__)
+#define CORO_HTTP_GCC_SANITIZED 1
 #endif
 
 TEST_CASE("completing a deep chain does not nest frame destruction") {
 #if defined(CORO_HTTP_DEEP_CHAIN_MEASUREMENT_UNSAFE)
   // On these builds the resumption frames themselves nest, which drowns out
   // any teardown nesting this measures.
-  SKIP("GCC keeps a stack frame per symmetric-transfer hop in this build");
+  SKIP("stack spread is not measurable in this build (sanitizer or GCC -O0)");
 #else
   teardown_probe::reset();
   REQUIRE(sync_wait(probed_chain(10'000)) == 10'000);
@@ -197,7 +203,7 @@ TEST_CASE("completing a 50k-deep chain does not overflow the stack") {
 
 TEST_CASE("awaiting a deep chain does not grow the call stack") {
 #if defined(CORO_HTTP_DEEP_CHAIN_MEASUREMENT_UNSAFE)
-  SKIP("GCC keeps a stack frame per symmetric-transfer hop in this build");
+  SKIP("stack spread is not measurable in this build (sanitizer or GCC -O0)");
 #else
   // Compare where the stack sits at the deepest point of a short chain and a
   // much longer one. With symmetric transfer both hops land at the same

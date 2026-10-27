@@ -193,6 +193,6 @@ spawn(loop, [&]() -> task<void> { co_await loop.sleep_for(1h); }());
 - 构建：CMake ≥ 3.25 + vcpkg manifest，presets：`dev` / `release` / `ci` / `asan` / `tsan`。
 - CI 同时跑 GCC 与 clang（Ubuntu 上两个编译器各一套，macOS 用 Apple clang），另有两个
   ASan/UBSan job（GCC 与 clang 各一）和一个 clang 的 TSan job。clang 的 sanitizer 构建
-  会真正执行全部深链测试；GCC 的那份按已知限制跳过它们。
+  会执行 5 万层完成测试；两条直接测量栈差的测试在所有 sanitizer 构建里跳过。
 - Linux 验证用的虚拟机是独立实例（`coro-http`），没有动本机已有的环境；
   `limactl start coro-http` 可再次启动。
