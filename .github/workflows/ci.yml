@@ -43,6 +43,31 @@ jobs:
           key: vcpkg-${{ runner.os }}-${{ matrix.cxx }}-${{ hashFiles('vcpkg.json') }}
           restore-keys: vcpkg-${{ runner.os }}-${{ matrix.cxx }}-
 
+      # Ubuntu 24.04 ships clang 18, which reports __cpp_concepts as 201907L.
+      # libstdc++ gates <expected> on 202002L, so clang 18 cannot see
+      # std::expected at all; clang 19 raised the macro.
+      - name: Install LLVM 19 for the clang job
+        if: matrix.os == 'ubuntu-latest' && matrix.cxx == 'clang++'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq gnupg wget lsb-release
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key |
+            sudo gpg --dearmor -o /usr/share/keyrings/llvm.gpg
+          codename=$(lsb_release -cs)
+          echo "deb [signed-by=/usr/share/keyrings/llvm.gpg] http://apt.llvm.org/${codename}/ llvm-toolchain-${codename}-19 main" |
+            sudo tee /etc/apt/sources.list.d/llvm.list
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq clang-19
+          sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-19 100
+          sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-19 100
+
+      - name: Toolchain
+        run: |
+          ${{ matrix.cxx }} --version | head -1
+          echo |
+            ${{ matrix.cxx }} -std=c++23 -dM -E -x c++ - |
+            grep -E '__cplusplus|__cpp_concepts' || true
+
       - name: Configure
         run: cmake --preset ci -DCMAKE_CXX_COMPILER=${{ matrix.cxx }}
 

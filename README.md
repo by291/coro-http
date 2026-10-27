@@ -182,7 +182,9 @@ spawn(loop, [&]() -> task<void> { co_await loop.sleep_for(1h); }());
 | macOS 27.2（Apple Silicon） | kqueue | Apple clang 21 | `dev` / `ci` / `asan` / `tsan` 四套构建各 62/62 |
 | Ubuntu 26.04（独立 Lima VM） | epoll | GCC 15.2 | Release 62/62；Debug 62/62（跳过 2 条栈测量）；ASan 62/62（跳过 3 条深链测试） |
 
-- 要求 C++23（协程 + `std::expected`）；Linux 侧 GCC 13+ / Clang 17+。
+- 要求 C++23（协程 + `std::expected`）；Linux 侧 GCC 13+ / Clang **19+**。
+  clang 18 把 `__cpp_concepts` 报成 `201907L`，而 libstdc++ 用它来决定是否暴露
+  `<expected>`，因此 clang 18 + libstdc++ 上 `std::expected` 根本不可见。
 - 构建：CMake ≥ 3.25 + vcpkg manifest，presets：`dev` / `release` / `ci` / `asan` / `tsan`。
 - CI 同时跑 GCC 与 clang（Ubuntu 上两个编译器各一套，macOS 用 Apple clang），另加一个 Ubuntu GCC 的 ASan/UBSan job。
 - Linux 验证用的虚拟机是独立实例（`coro-http`），没有动本机已有的环境；
