@@ -125,6 +125,11 @@ cmake --preset tsan && cmake --build build/tsan
 ./build/tsan/tests/coro_http_tests               # 数据竞争
 ```
 
+sanitizer 构建用 `RelWithDebInfo` + `-O1`：比 `-O0` 快得多，栈回溯仍然可用，UBSan 也不会
+被过度优化折叠掉。UBSan 打开 `-fno-sanitize-recover=all`，CI 里另外设置
+`ASAN_OPTIONS=detect_leaks=1:abort_on_error=1` 与
+`UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1`，让报告直接让 job 失败，而不是打印完继续。
+
 测试分三层：
 
 - **单元**：`Task` 生命周期与深链（含一条直接测量析构嵌套深度的回归测试）、事件循环（fd 就绪、超时、跨线程 post）、线程池饱和、解析器表驱动、路由与响应序列化。
@@ -186,6 +191,8 @@ spawn(loop, [&]() -> task<void> { co_await loop.sleep_for(1h); }());
   clang 18 把 `__cpp_concepts` 报成 `201907L`，而 libstdc++ 用它来决定是否暴露
   `<expected>`，因此 clang 18 + libstdc++ 上 `std::expected` 根本不可见。
 - 构建：CMake ≥ 3.25 + vcpkg manifest，presets：`dev` / `release` / `ci` / `asan` / `tsan`。
-- CI 同时跑 GCC 与 clang（Ubuntu 上两个编译器各一套，macOS 用 Apple clang），另加一个 Ubuntu GCC 的 ASan/UBSan job。
+- CI 同时跑 GCC 与 clang（Ubuntu 上两个编译器各一套，macOS 用 Apple clang），另有两个
+  ASan/UBSan job（GCC 与 clang 各一）。clang 的 sanitizer 构建会真正执行全部深链测试；
+  GCC 的那份按已知限制跳过它们。
 - Linux 验证用的虚拟机是独立实例（`coro-http`），没有动本机已有的环境；
   `limactl start coro-http` 可再次启动。

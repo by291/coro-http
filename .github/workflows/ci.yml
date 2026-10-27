@@ -30,19 +30,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up vcpkg
-        uses: lukka/run-vcpkg@v11
-        with:
-          # Keep this in sync with builtin-baseline in vcpkg.json.
-          vcpkgGitCommitId: 5363acb796e576328288fae60c25304e227e9839
-
-      - name: Cache vcpkg binary artifacts
-        uses: actions/cache@v4
-        with:
-          path: ${{ github.workspace }}/.vcpkg-cache
-          key: vcpkg-${{ runner.os }}-${{ matrix.cxx }}-${{ hashFiles('vcpkg.json') }}
-          restore-keys: vcpkg-${{ runner.os }}-${{ matrix.cxx }}-
-
       # Ubuntu 24.04 ships clang 18, which reports __cpp_concepts as 201907L.
       # libstdc++ gates <expected> on 202002L, so clang 18 cannot see
       # std::expected at all; clang 19 raised the macro.
@@ -63,6 +50,19 @@ jobs:
           sudo update-alternatives --set clang /usr/bin/clang-19
           sudo update-alternatives --set clang++ /usr/bin/clang++-19
 
+      - name: Set up vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          # Keep this in sync with builtin-baseline in vcpkg.json.
+          vcpkgGitCommitId: 5363acb796e576328288fae60c25304e227e9839
+
+      - name: Cache vcpkg binary artifacts
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.vcpkg-cache
+          key: vcpkg-${{ runner.os }}-${{ matrix.cxx }}-${{ hashFiles('vcpkg.json') }}
+          restore-keys: vcpkg-${{ runner.os }}-${{ matrix.cxx }}-
+
       - name: Toolchain
         run: |
           ${{ matrix.cxx }} --version | head -1
@@ -80,14 +80,42 @@ jobs:
         run: ctest --preset ci
 
   sanitizers:
-    name: asan+ubsan (ubuntu / gcc)
+    name: asan+ubsan (ubuntu / ${{ matrix.compiler }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - compiler: gcc
+            cxx: g++
+          - compiler: clang
+            cxx: clang++
 
     env:
       VCPKG_BINARY_SOURCES: "clear;files,${{ github.workspace }}/.vcpkg-cache,readwrite"
+      # Fail the job instead of printing a report and carrying on.
+      ASAN_OPTIONS: detect_leaks=1:abort_on_error=1
+      UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Install LLVM 19 for the clang job
+        if: matrix.cxx == 'clang++'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq gnupg wget lsb-release
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key |
+            sudo gpg --dearmor -o /usr/share/keyrings/llvm.gpg
+          codename=$(lsb_release -cs)
+          echo "deb [signed-by=/usr/share/keyrings/llvm.gpg] http://apt.llvm.org/${codename}/ llvm-toolchain-${codename}-19 main" |
+            sudo tee /etc/apt/sources.list.d/llvm.list
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq clang-19
+          sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-19 100
+          sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-19 100
+          sudo update-alternatives --set clang /usr/bin/clang-19
+          sudo update-alternatives --set clang++ /usr/bin/clang++-19
 
       - name: Set up vcpkg
         uses: lukka/run-vcpkg@v11
@@ -98,11 +126,18 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ github.workspace }}/.vcpkg-cache
-          key: vcpkg-${{ runner.os }}-asan-${{ hashFiles('vcpkg.json') }}
-          restore-keys: vcpkg-${{ runner.os }}-asan-
+          key: vcpkg-${{ runner.os }}-asan-${{ matrix.cxx }}-${{ hashFiles('vcpkg.json') }}
+          restore-keys: vcpkg-${{ runner.os }}-asan-${{ matrix.cxx }}-
+
+      - name: Toolchain
+        run: |
+          ${{ matrix.cxx }} --version | head -1
+          echo |
+            ${{ matrix.cxx }} -std=c++23 -dM -E -x c++ - |
+            grep -E '__cplusplus|__cpp_concepts' || true
 
       - name: Configure
-        run: cmake --preset asan
+        run: cmake --preset asan -DCMAKE_CXX_COMPILER=${{ matrix.cxx }}
 
       - name: Build
         run: cmake --build --preset asan
