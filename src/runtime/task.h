@@ -113,17 +113,31 @@ private:
     }
 
     T await_resume() {
+      // Destroy the finished child here rather than in the destructor. GCC
+      // keeps co_await temporaries alive until the frame dies, so leaving the
+      // handle armed would make tearing down an N-deep chain recurse N frames
+      // deep. Destroying it now (and clearing the handle) keeps unwinding
+      // iterative: every completed frame owns an empty awaiter.
       if constexpr (std::is_void_v<T>) {
+        release_frame();
         return;
       } else {
-        return std::move(*handle.promise().result);
+        T value = std::move(*handle.promise().result);
+        release_frame();
+        return value;
       }
     }
 
-    // The co_await full-expression ends here: the task frame is done with.
-    ~awaiter() {
+    // Still needed when the awaiting coroutine is destroyed while suspended:
+    // the chain beneath it is then torn down recursively. Keep await chains
+    // shallow in code that can be cancelled.
+    ~awaiter() { release_frame(); }
+
+   private:
+    void release_frame() {
       if (handle) {
         handle.destroy();
+        handle = {};
       }
     }
   };

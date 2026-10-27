@@ -49,11 +49,46 @@ struct awaiter {
 - `inner` 完成时 `final_suspend` 返回 `continuation`，直接跳回 `outer`；
 - 没有续体时返回 `std::noop_coroutine()`，控制权回到最初的 `resume()` 调用者。
 
-`recursive_chain(50'000)` 那个测试就是为了证明这一点：没有对称转移，五万层嵌套必然爆栈。
+测试 `awaiting a deep chain does not grow the call stack` 直接比较 500 层与 5000 层
+在链最深处读到的栈地址：对称转移成立时两者相同，不成立时差值随层数增长。
 
-一个实测差异：GCC 在 `-O0` 下每条对称转移边仍会留下几十字节栈帧（`-O2` 下完全消除），
-clang 在 `-O0` 下也不留。因此测试取 5 万层——足以证明机制，又能在两个编译器的
-Debug 构建下稳定通过。`-O2` 下十万层也没有问题。
+## 帧的销毁同样是设计的一部分
+
+单所有权意味着「A 的帧里存着拥有 B 帧的 awaiter」。子帧的销毁点有两种选择：
+
+- 放在 awaiter 的析构函数里 —— 如果编译器把 `co_await` 临时对象保留到帧析构
+  （GCC 在非优化、以及带 sanitizer 的构建里就是这样），销毁一条 N 层链会递归 N 层；
+- 放在 `await_resume()` 里（本项目的做法）—— 子帧已经停在 `final_suspend`，
+  取走返回值后立即销毁并清空句柄，父帧里就只剩下空 awaiter。
+
+```cpp
+T value = std::move(*handle.promise().result);
+release_frame();
+return value;
+```
+
+析构函数仍保留一份兜底，用于「链还挂着就被销毁」的情况：那条路径确实是递归的，
+所以**可能被取消的 await 链要保持浅**（本项目实际的链只有 session -> dispatch ->
+handler 三层左右）。
+
+## 深链与编译器：一个实测结论
+
+测试 `awaiting a deep chain does not grow the call stack` 比较 500 层与 5000 层
+在链最深处读到的栈地址。实测结果：
+
+| 编译器 / 构建 | 每跳栈用量 |
+|---|---|
+| clang（含 ASan / TSan，`-O0`） | 0 字节 |
+| GCC `-O2` / `-O3`，无 sanitizer | 0 字节 |
+| GCC `-O0` | 64 字节 |
+| GCC + ASan（任何优化级别） | 64–71 字节 |
+
+也就是说，GCC 只在「优化开启且没有 sanitizer 插桩」时才真正实现对称转移的无栈增长。
+10 万层在 GCC `-O0` 下需要 6.4MB 栈，会爆；在 clang 或 GCC 优化构建下没问题。
+
+这不是本项目的实现问题（`await_suspend` 返回下一个句柄就是标准要求的对称转移写法），
+而是 GCC 的代码生成特性。因此三条深链测试在 GCC 的非优化或带 sanitizer 构建里会
+`SKIP`，并在原因里写明；CI 的 Release job 与 macOS 的 ASan/TSan job 会真正执行它们。
 
 ## IO 等待是如何接进事件循环的
 

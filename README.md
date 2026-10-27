@@ -23,7 +23,7 @@ export VCPKG_ROOT=/path/to/vcpkg
 cmake --preset dev
 cmake --build build/dev
 
-# 跑测试（60 个用例）
+# 跑测试（62 个用例）
 ctest --test-dir build/dev --output-on-failure
 
 # 跑服务
@@ -93,7 +93,7 @@ bench/bench.sh http://127.0.0.1:8080/hello 20000 100
 ## 它做对了什么
 
 - **单线程 reactor**：所有 handler、所有协程都在事件循环线程上跑。唯一的其他线程是 `blocking_call` 的线程池。
-- **协程帧的单所有权**：`Task<T>` 惰性启动、单所有者、`co_await` 结束时销毁；`final_suspend` 用 symmetric transfer 把控制权直接交给续体，10 万层嵌套 await 也不会撑爆调用栈（有测试）。
+- **协程帧的单所有权**：`Task<T>` 惰性启动、单所有者；`final_suspend` 用 symmetric transfer 把控制权直接交给续体，深链 await 在 clang 与 GCC 优化构建下栈用量不随层数增长（有测试）。子帧在 `await_resume` 里即时销毁并清空句柄，避免「销毁 N 层链递归 N 层」。注意 GCC 在非优化或带 sanitizer 的构建里无法消除每跳 64 字节的栈帧，三条深链测试会在那里跳过并写明原因。
 - **一次性兴趣**：suspending 时向事件循环注册 fd 兴趣，恢复时撤销；底层后端保持水平触发，既没有边缘触发的「必须读到 EAGAIN」陷阱，也不会重复唤醒。
 - **定时器不进后端**：epoll 没有原生定时器，kqueue 有，因此统一成「最小堆 + poll 超时」，两个后端语义一致。取消采用惰性删除，并在死条目超过活条目时重建堆，避免高并发下堆随「速率 × 超时」增长（有测试）。
 - **协议策略集中**：Host 必填、Content-Length / Transfer-Encoding 冲突、重复 Content-Length、obs-fold、各类上限（414 / 431 / 413 / 501 / 505）都在 `parse_request_head()` 里，解析器是纯函数，表驱动测试覆盖畸形输入。
@@ -116,7 +116,7 @@ bench/bench.sh http://127.0.0.1:8080/hello 20000 100
 ## 测试与检查
 
 ```bash
-ctest --test-dir build/dev --output-on-failure   # 60 个用例
+ctest --test-dir build/dev --output-on-failure   # 62 个用例
 
 cmake --preset asan && cmake --build build/asan
 ./build/asan/tests/coro_http_tests               # 内存/UB
@@ -127,7 +127,7 @@ cmake --preset tsan && cmake --build build/tsan
 
 测试分三层：
 
-- **单元**：`Task` 生命周期与深链、事件循环（fd 就绪、超时、跨线程 post）、线程池饱和、解析器表驱动、路由与响应序列化。
+- **单元**：`Task` 生命周期与深链（含一条直接测量析构嵌套深度的回归测试）、事件循环（fd 就绪、超时、跨线程 post）、线程池饱和、解析器表驱动、路由与响应序列化。
 - **集成**：真起一个服务，用阻塞 socket 当客户端，覆盖 keep-alive、POST、404/405、并发、413、400、优雅关闭。
 - **微基准**：解析与序列化，方便以后替换实现时做对照。
 
@@ -170,8 +170,8 @@ spawn(loop, [&]() -> task<void> { co_await loop.sleep_for(1h); }());
 
 | 平台 | 后端 | 编译器 | 结果 |
 |---|---|---|---|
-| macOS 27.2（Apple Silicon） | kqueue | Apple clang 21 | `dev` / `ci` / `asan` / `tsan` 四套构建各 60/60 |
-| Ubuntu 26.04（独立 Lima VM） | epoll | GCC 15.2 | Debug 构建 60/60 |
+| macOS 27.2（Apple Silicon） | kqueue | Apple clang 21 | `dev` / `ci` / `asan` / `tsan` 四套构建各 62/62 |
+| Ubuntu 26.04（独立 Lima VM） | epoll | GCC 15.2 | Release 62/62；Debug 与 ASan 各 62/62（3 条深链测试按上述原因跳过） |
 
 - 要求 C++23（协程 + `std::expected`）；Linux 侧 GCC 13+ / Clang 17+。
 - 构建：CMake ≥ 3.25 + vcpkg manifest，presets：`dev` / `release` / `ci` / `asan` / `tsan`。
