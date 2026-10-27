@@ -144,3 +144,62 @@ jobs:
 
       - name: Test
         run: ctest --preset asan
+
+  tsan:
+    name: tsan (ubuntu / clang)
+    runs-on: ubuntu-latest
+
+    env:
+      VCPKG_BINARY_SOURCES: "clear;files,${{ github.workspace }}/.vcpkg-cache,readwrite"
+      TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install LLVM 19
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq gnupg wget lsb-release
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key |
+            sudo gpg --dearmor -o /usr/share/keyrings/llvm.gpg
+          codename=$(lsb_release -cs)
+          echo "deb [signed-by=/usr/share/keyrings/llvm.gpg] http://apt.llvm.org/${codename}/ llvm-toolchain-${codename}-19 main" |
+            sudo tee /etc/apt/sources.list.d/llvm.list
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq clang-19
+          sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-19 100
+          sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-19 100
+          sudo update-alternatives --set clang /usr/bin/clang-19
+          sudo update-alternatives --set clang++ /usr/bin/clang++-19
+
+      # TSan's shadow memory does not fit Ubuntu 24.04's default ASLR entropy.
+      - name: Relax ASLR for ThreadSanitizer
+        run: sudo sysctl vm.mmap_rnd_bits=28
+
+      - name: Set up vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgGitCommitId: 5363acb796e576328288fae60c25304e227e9839
+
+      - name: Cache vcpkg binary artifacts
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.vcpkg-cache
+          key: vcpkg-${{ runner.os }}-tsan-${{ hashFiles('vcpkg.json') }}
+          restore-keys: vcpkg-${{ runner.os }}-tsan-
+
+      - name: Toolchain
+        run: |
+          clang++ --version | head -1
+          echo |
+            clang++ -std=c++23 -dM -E -x c++ - |
+            grep -E '__cplusplus|__cpp_concepts' || true
+
+      - name: Configure
+        run: cmake --preset tsan -DCMAKE_CXX_COMPILER=clang++
+
+      - name: Build
+        run: cmake --build --preset tsan
+
+      - name: Test
+        run: ctest --preset tsan

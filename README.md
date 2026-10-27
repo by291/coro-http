@@ -192,7 +192,7 @@ spawn(loop, [&]() -> task<void> { co_await loop.sleep_for(1h); }());
   `<expected>`，因此 clang 18 + libstdc++ 上 `std::expected` 根本不可见。
 - 构建：CMake ≥ 3.25 + vcpkg manifest，presets：`dev` / `release` / `ci` / `asan` / `tsan`。
 - CI 同时跑 GCC 与 clang（Ubuntu 上两个编译器各一套，macOS 用 Apple clang），另有两个
-  ASan/UBSan job（GCC 与 clang 各一）。clang 的 sanitizer 构建会真正执行全部深链测试；
-  GCC 的那份按已知限制跳过它们。
+  ASan/UBSan job（GCC 与 clang 各一）和一个 clang 的 TSan job。clang 的 sanitizer 构建
+  会真正执行全部深链测试；GCC 的那份按已知限制跳过它们。
 - Linux 验证用的虚拟机是独立实例（`coro-http`），没有动本机已有的环境；
   `limactl start coro-http` 可再次启动。
