@@ -1,0 +1,24 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "coro-http",
+  "version": "0.1.0",
+  "description": "A coroutine-driven HTTP/1.1 server demo",
+  "builtin-baseline": "5363acb796e576328288fae60c25304e227e9839",
+  "dependencies": [
+    "picohttpparser"
+  ],
+  "features": {
+    "tests": {
+      "description": "Unit and integration tests built with Catch2",
+      "dependencies": [
+        "catch2"
+      ]
+    },
+    "bench": {
+      "description": "Micro-benchmarks built with Google Benchmark",
+      "dependencies": [
+        "benchmark"
+      ]
+    }
+  }
+}

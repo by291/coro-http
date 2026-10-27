@@ -1,0 +1,4 @@
+# clangd only searches for compile_commands.json in ancestor directories of
+# each source file, so point it at the dev preset's build tree explicitly.
+CompileFlags:
+  CompilationDatabase: build/dev
