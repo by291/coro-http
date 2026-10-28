@@ -1,7 +1,7 @@
 #include "http/parse_request_head.h"
 
+#include <ada.h>
 #include <picohttpparser.h>
-#include <uriparser/Uri.h>
 
 #include <limits>
 #include <string>
@@ -205,20 +205,10 @@ parsed_head parse_request_head(std::string_view data, const parse_limits& limits
   if (auto question = result.head.target.find('?'); question != std::string::npos) {
     std::string_view query(result.head.target.data() + question + 1,
                            result.head.target.size() - question - 1);
-    UriQueryListA* list = nullptr;
-    int count = 0;
-    if (uriDissectQueryMallocA(&list, &count, query.data(), query.data() + query.size()) ==
-        URI_SUCCESS) {
-      if (count > 0) {
-        result.head.query_params.reserve(static_cast<std::size_t>(count));
-      }
-      for (const UriQueryListA* item = list; item != nullptr; item = item->next) {
-        result.head.query_params.push_back(name_value{
-            item->key != nullptr ? item->key : "",
-            item->value != nullptr ? item->value : "",
-        });
-      }
-      uriFreeQueryListA(list);
+    ada::url_search_params params(query);
+    result.head.query_params.reserve(params.size());
+    for (const auto& [key, value] : params) {
+      result.head.query_params.push_back(name_value{std::string(key), std::string(value)});
     }
   }
 

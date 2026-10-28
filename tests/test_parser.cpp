@@ -208,6 +208,17 @@ TEST_CASE("a malformed percent escape is left alone") {
   REQUIRE(result.head.query_param("a") == "%zz");
 }
 
+TEST_CASE("a percent-encoded NUL is preserved") {
+  auto result = parse("GET /x?a=x%00y HTTP/1.1\r\nHost: x\r\n\r\n");
+
+  REQUIRE(result.status == head_status::complete);
+  std::string_view value = result.head.query_param("a");
+  REQUIRE(value.size() == 3);
+  REQUIRE(value[0] == 'x');
+  REQUIRE(value[1] == '\0');
+  REQUIRE(value[2] == 'y');
+}
+
 TEST_CASE("an empty or absent query yields no parameters") {
   auto empty = parse("GET /x? HTTP/1.1\r\nHost: x\r\n\r\n");
   auto absent = parse("GET /x HTTP/1.1\r\nHost: x\r\n\r\n");

@@ -20,8 +20,8 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(CORO_HTTP_BUILD_BENCH "Build micro-benchmarks" OFF)
 
+find_package(ada CONFIG REQUIRED)
 find_package(unofficial-picohttpparser CONFIG REQUIRED)
-find_package(uriparser CONFIG REQUIRED)
 
 add_library(coro_http STATIC
   src/runtime/thread_pool.cpp
@@ -46,7 +46,7 @@ endif()
 
 target_include_directories(coro_http PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(coro_http PUBLIC unofficial::picohttpparser::picohttpparser)
-target_link_libraries(coro_http PRIVATE uriparser::uriparser)
+target_link_libraries(coro_http PRIVATE ada::ada)
 target_compile_options(coro_http PRIVATE -Wall -Wextra -Wpedantic)
 
 add_executable(coro-http
