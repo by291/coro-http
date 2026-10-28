@@ -1,0 +1,37 @@
+src/runtime/task.h
+  s_959c1c5583842f::t_693f4153a7fe04 130-131
+  s_959c1c5583842f::t_aea89b7e39b0b7 155-156
+  s_959c1c5583842f::t_3fc80e5d98ac8f 40-43,45-47,51,55-57,69-70
+  s_959c1c5583842f::t_ffa35fe65e763e 82-83
+  s_959c1c5583842f::t_8c95fb2416a8bb 168-169
+  s_959c1c5583842f::t_1f59458e13c74a 10-32
+  s_959c1c5583842f::t_c111a765c0bae1 64-65
+  s_959c1c5583842f::t_5f444d25d93d36 88
+  s_959c1c5583842f::t_f04b83b04d6db2 159-160
+  s_959c1c5583842f::t_1196adf429592c 110
+  s_959c1c5583842f::t_7a0525c66de473 52
+  s_959c1c5583842f::t_36d8cc06b0d174 105-106
+  s_959c1c5583842f::t_0e8bae6a0f4c78 167
+  s_959c1c5583842f::t_8261e7bdbc94df 99
+  s_959c1c5583842f::t_6a0f4fa39a0f6d 200-201
+  s_959c1c5583842f::t_c59224844ce8d1 132
+  s_959c1c5583842f::t_291f72aa8add35 139-140
+src/runtime/sync_wait.h
+  s_959c1c5583842f::t_dcd38c6f9b2fe3 27-28
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "e142b889946ff1bdbac3e6c712d47f5e5a33febe",
+  "prompts": {},
+  "sessions": {
+    "s_959c1c5583842f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "df17cd8c-eea9-4bf8-ac57-9111c7643a9c",
+        "model": "deepseek-v4-flash"
+      },
+      "human_author": "by291 <bystander291@gmail.com>"
+    }
+  }
+}
