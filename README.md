@@ -62,15 +62,17 @@ curl http://127.0.0.1:8080/stats
 ## 实测数字
 
 本机：Apple Silicon（14 核）、macOS 27.2、Apple clang 21、`Release` 构建、loopback。
+每个数字都先预热一次，再连续测 5 次取中位数。这台机器平时还有别的负载，
+单次结果会有 ±20% 的波动（观察范围 152k–185k req/s）。
 
 ```bash
 ab -n 20000 -c 100 -k http://127.0.0.1:8080/hello
 ```
 
-| 指标 | 结果 |
+| 指标 | 结果（5 次中位数） |
 |---|---|
-| Requests per second | **124,799** |
-| Time per request | 0.801 ms |
+| Requests per second | **177,787** |
+| Time per request | 0.562 ms（并发 100） |
 | Failed requests | 0 |
 | Keep-Alive requests | 20000 / 20000 |
 
@@ -78,14 +80,14 @@ ab -n 20000 -c 100 -k http://127.0.0.1:8080/hello
 
 | 基准 | 时间 |
 |---|---|
-| 解析典型请求头 | 110 ns |
-| 解析 24 个头的请求头 | 386 ns |
-| 序列化 1 KiB 响应 | 62 ns |
+| 解析典型请求头（含 `?x=1` 的 query 解码） | 160 ns |
+| 解析 24 个头的请求头 | 356 ns |
+| 序列化 1 KiB 响应 | 57 ns |
 
 复现：
 
 ```bash
-./build/release/bench/coro_http_bench --benchmark_min_time=0.3s
+./build/release/bench/coro_http_bench --benchmark_min_time=0.5s
 ./build/release/coro-http --port 8080 &
 bench/bench.sh http://127.0.0.1:8080/hello 20000 100
 ```
