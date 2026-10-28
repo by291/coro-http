@@ -20,7 +20,7 @@ response response::with_status(int status) {
 }
 
 std::string_view response::header(std::string_view name) const {
-  for (const header_field& field : headers) {
+  for (const name_value& field : headers) {
     if (detail::ascii_iequals(field.name, name)) {
       return field.value;
     }
@@ -29,13 +29,13 @@ std::string_view response::header(std::string_view name) const {
 }
 
 void response::set_header(std::string name, std::string value) {
-  for (header_field& field : headers) {
+  for (name_value& field : headers) {
     if (detail::ascii_iequals(field.name, name)) {
       field.value = std::move(value);
       return;
     }
   }
-  headers.push_back(header_field{std::move(name), std::move(value)});
+  headers.push_back(name_value{std::move(name), std::move(value)});
 }
 
 std::string status_text(int status) {
@@ -84,7 +84,7 @@ std::string serialize_response(const response& res, bool keep_alive, bool head_r
   wire += "\r\n";
 
   bool has_content_length = false;
-  for (const header_field& field : res.headers) {
+  for (const name_value& field : res.headers) {
     if (detail::ascii_iequals(field.name, "connection")) {
       continue;  // framing owns this one
     }

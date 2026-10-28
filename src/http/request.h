@@ -7,7 +7,8 @@
 
 namespace coro_http {
 
-struct header_field {
+// A name/value pair shared by headers, path parameters and query parameters.
+struct name_value {
   std::string name;
   std::string value;
 };
@@ -16,15 +17,15 @@ struct request {
   std::string method;
   std::string target;
   int minor_version{1};
-  std::vector<header_field> headers;
+  std::vector<name_value> headers;
   std::string body;
 
   // Filled by the router when the path pattern has :parameters.
-  std::vector<header_field> params;
+  std::vector<name_value> params;
 
   // Decoded query parameters, filled by the parser when the target has a
   // query string. Unlike path()/query(), these are owned strings.
-  std::vector<header_field> query_params;
+  std::vector<name_value> query_params;
 
   // Case-insensitive header lookup; returns an empty view when absent.
   [[nodiscard]] std::string_view header(std::string_view name) const;
@@ -58,7 +59,7 @@ inline bool ascii_iequals(std::string_view lhs, std::string_view rhs) {
 }  // namespace detail
 
 inline std::string_view request::header(std::string_view name) const {
-  for (const header_field& field : headers) {
+  for (const name_value& field : headers) {
     if (detail::ascii_iequals(field.name, name)) {
       return field.value;
     }
@@ -80,7 +81,7 @@ inline std::string_view request::query() const {
 }
 
 inline std::string_view request::query_param(std::string_view name) const {
-  for (const header_field& field : query_params) {
+  for (const name_value& field : query_params) {
     if (field.name == name) {
       return field.value;
     }

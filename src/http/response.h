@@ -10,7 +10,7 @@ namespace coro_http {
 
 struct response {
   int status{200};
-  std::vector<header_field> headers;
+  std::vector<name_value> headers;
   std::string body;
 
   // Set by a handler or the session to end the connection regardless of the

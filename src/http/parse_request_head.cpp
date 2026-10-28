@@ -143,7 +143,7 @@ parsed_head parse_request_head(std::string_view data, const parse_limits& limits
       // Continuation line: obsolete line folding is not accepted.
       return invalid(400);
     }
-    result.head.headers.push_back(header_field{
+    result.head.headers.push_back(name_value{
         std::string(headers[i].name, headers[i].name_len),
         std::string(headers[i].value, headers[i].value_len),
     });
@@ -154,7 +154,7 @@ parsed_head parse_request_head(std::string_view data, const parse_limits& limits
   bool has_content_length = false;
   std::size_t content_length = 0;
 
-  for (const header_field& field : result.head.headers) {
+  for (const name_value& field : result.head.headers) {
     if (detail::ascii_iequals(field.name, "host")) {
       has_host = true;
     } else if (detail::ascii_iequals(field.name, "transfer-encoding")) {
@@ -186,7 +186,7 @@ parsed_head parse_request_head(std::string_view data, const parse_limits& limits
   }
 
   bool keep_alive = minor_version == 1;
-  for (const header_field& field : result.head.headers) {
+  for (const name_value& field : result.head.headers) {
     if (!detail::ascii_iequals(field.name, "connection")) {
       continue;
     }
@@ -213,7 +213,7 @@ parsed_head parse_request_head(std::string_view data, const parse_limits& limits
         result.head.query_params.reserve(static_cast<std::size_t>(count));
       }
       for (const UriQueryListA* item = list; item != nullptr; item = item->next) {
-        result.head.query_params.push_back(header_field{
+        result.head.query_params.push_back(name_value{
             item->key != nullptr ? item->key : "",
             item->value != nullptr ? item->value : "",
         });

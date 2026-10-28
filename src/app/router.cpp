@@ -29,7 +29,7 @@ std::vector<std::string_view> split_path(std::string_view path) {
 
 struct route_match {
   bool matched{false};
-  std::vector<header_field> params;
+  std::vector<name_value> params;
 };
 
 route_match match_pattern(std::string_view pattern, std::string_view path) {
@@ -49,7 +49,7 @@ route_match match_pattern(std::string_view pattern, std::string_view path) {
       if (actual.empty()) {
         return {};
       }
-      result.params.push_back(header_field{std::string(expected.substr(1)), std::string(actual)});
+      result.params.push_back(name_value{std::string(expected.substr(1)), std::string(actual)});
       continue;
     }
     if (expected != actual) {
@@ -68,7 +68,7 @@ void router::add(std::string method, std::string pattern, handler handle) {
 task<response> router::dispatch(request req) const {
   std::string_view path = req.path();
 
-  std::vector<std::pair<std::size_t, std::vector<header_field>>> path_matches;
+  std::vector<std::pair<std::size_t, std::vector<name_value>>> path_matches;
   std::string allow;
   for (std::size_t i = 0; i < routes_.size(); ++i) {
     route_match match = match_pattern(routes_[i].pattern, path);
