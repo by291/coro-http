@@ -1,0 +1,28 @@
+src/http/parse_request_head.cpp
+  s_959c1c5583842f::t_4a0d8363a257c0 146,157,189,216
+src/http/response.h
+  s_959c1c5583842f::t_4a0d8363a257c0 13
+src/http/response.cpp
+  s_959c1c5583842f::t_4a0d8363a257c0 23,32,38,87
+src/app/router.cpp
+  s_959c1c5583842f::t_4a0d8363a257c0 32,52,71
+src/http/request.h
+  s_959c1c5583842f::t_e7bc452350abba 10
+  s_959c1c5583842f::t_4a0d8363a257c0 11,20,24,28,62,84
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "d843338dd39bcb12d57960b778064dd746e52aa9",
+  "prompts": {},
+  "sessions": {
+    "s_959c1c5583842f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "df17cd8c-eea9-4bf8-ac57-9111c7643a9c",
+        "model": "deepseek-v4-flash"
+      },
+      "human_author": "by291 <bystander291@gmail.com>"
+    }
+  }
+}
