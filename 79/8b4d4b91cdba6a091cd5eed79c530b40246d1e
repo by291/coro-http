@@ -1,0 +1,35 @@
+CMakeLists.txt
+  s_959c1c5583842f::t_b7775925f6afb9 24
+  s_959c1c5583842f::t_3a63531124f7d6 49
+src/http/parse_request_head.cpp
+  s_959c1c5583842f::t_4ca6af87edb599 202-215,217-224
+  s_959c1c5583842f::t_a70c9039294a35 4
+  s_959c1c5583842f::t_e61f3dfe27e364 216
+tests/test_parser.cpp
+  s_959c1c5583842f::t_2bff2f68a812fd 179-218
+src/http/request.h
+  s_959c1c5583842f::t_873021e62f1b85 82,84-90
+  s_959c1c5583842f::t_dcf58601805430 25-26,28,34-37
+  s_959c1c5583842f::t_e61f3dfe27e364 27,83
+src/app/handlers.cpp
+  s_959c1c5583842f::t_b35c4855dca499 53
+  s_959c1c5583842f::t_ecc479d3aa9008 43
+vcpkg.json
+  s_959c1c5583842f::t_bf2b1b06d10e73 8-9
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "798b4d4b91cdba6a091cd5eed79c530b40246d1e",
+  "prompts": {},
+  "sessions": {
+    "s_959c1c5583842f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "df17cd8c-eea9-4bf8-ac57-9111c7643a9c",
+        "model": "deepseek-v4-flash"
+      },
+      "human_author": "by291 <bystander291@gmail.com>"
+    }
+  }
+}
