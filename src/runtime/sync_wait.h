@@ -24,6 +24,8 @@ struct sync_wait_coro {
 
     std::suspend_always initial_suspend() const noexcept { return {}; }
 
+    // The driver parks at final_suspend: sync_wait reads the stored exception
+    // and destroys the frame; nothing resumes it afterwards.
     struct final_awaiter {
       bool await_ready() const noexcept { return false; }
       std::coroutine_handle<> await_suspend(std::coroutine_handle<promise_type>) const noexcept {
