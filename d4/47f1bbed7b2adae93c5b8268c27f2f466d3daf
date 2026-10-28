@@ -1,0 +1,32 @@
+vcpkg.json
+  s_959c1c5583842f::t_abd6512b8e025c 8-9
+CMakeLists.txt
+  s_959c1c5583842f::t_f9beaf0a0c3eec 49
+  s_959c1c5583842f::t_4e4e666aa297c1 23
+src/http/parse_request_head.cpp
+  s_959c1c5583842f::t_85a8cff7d74f12 3
+  s_959c1c5583842f::t_4316aee49c97c5 208-211
+tests/test_parser.cpp
+  s_959c1c5583842f::t_cbd7fdc6513283 211-221
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "d447f1bbed7b2adae93c5b8268c27f2f466d3daf",
+  "prompts": {},
+  "humans": {
+    "h_feb5f3a722bbf4": {
+      "author": "by291 <bystander291@gmail.com>"
+    }
+  },
+  "sessions": {
+    "s_959c1c5583842f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "df17cd8c-eea9-4bf8-ac57-9111c7643a9c",
+        "model": "deepseek-v4-flash"
+      },
+      "human_author": "by291 <bystander291@gmail.com>"
+    }
+  }
+}
