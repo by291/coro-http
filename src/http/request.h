@@ -22,11 +22,19 @@ struct request {
   // Filled by the router when the path pattern has :parameters.
   std::vector<header_field> params;
 
+  // Decoded query parameters, filled by the parser when the target has a
+  // query string. Unlike path()/query(), these are owned strings.
+  std::vector<header_field> query_params;
+
   // Case-insensitive header lookup; returns an empty view when absent.
   [[nodiscard]] std::string_view header(std::string_view name) const;
 
   [[nodiscard]] std::string_view path() const;
   [[nodiscard]] std::string_view query() const;
+
+  // Case-sensitive lookup over the decoded query parameters; returns an
+  // empty view when absent.
+  [[nodiscard]] std::string_view query_param(std::string_view name) const;
 };
 
 namespace detail {
@@ -69,6 +77,15 @@ inline std::string_view request::query() const {
     return {};
   }
   return std::string_view(target).substr(question + 1);
+}
+
+inline std::string_view request::query_param(std::string_view name) const {
+  for (const header_field& field : query_params) {
+    if (field.name == name) {
+      return field.value;
+    }
+  }
+  return {};
 }
 
 }  // namespace coro_http

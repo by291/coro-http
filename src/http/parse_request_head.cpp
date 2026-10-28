@@ -1,6 +1,7 @@
 #include "http/parse_request_head.h"
 
 #include <picohttpparser.h>
+#include <uriparser/Uri.h>
 
 #include <limits>
 #include <string>
@@ -198,6 +199,29 @@ parsed_head parse_request_head(std::string_view data, const parse_limits& limits
 
   result.content_length = content_length;
   result.keep_alive = keep_alive;
+
+  // picohttpparser hands back the raw target; decode the query string here so
+  // handlers see application/x-www-form-urlencoded values (+ -> space, %XX).
+  if (auto question = result.head.target.find('?'); question != std::string::npos) {
+    std::string_view query(result.head.target.data() + question + 1,
+                           result.head.target.size() - question - 1);
+    UriQueryListA* list = nullptr;
+    int count = 0;
+    if (uriDissectQueryMallocA(&list, &count, query.data(), query.data() + query.size()) ==
+        URI_SUCCESS) {
+      if (count > 0) {
+        result.head.query_params.reserve(static_cast<std::size_t>(count));
+      }
+      for (const UriQueryListA* item = list; item != nullptr; item = item->next) {
+        result.head.query_params.push_back(header_field{
+            item->key != nullptr ? item->key : "",
+            item->value != nullptr ? item->value : "",
+        });
+      }
+      uriFreeQueryListA(list);
+    }
+  }
+
   return result;
 }
 

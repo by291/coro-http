@@ -17,22 +17,6 @@ namespace {
 
 constexpr std::chrono::milliseconds kMaxSlowDelay{60'000};
 
-std::string_view query_value(std::string_view query, std::string_view key) {
-  while (!query.empty()) {
-    const auto amp = query.find('&');
-    const std::string_view pair = query.substr(0, amp);
-    const auto equals = pair.find('=');
-    if (equals != std::string_view::npos && pair.substr(0, equals) == key) {
-      return pair.substr(equals + 1);
-    }
-    if (amp == std::string_view::npos) {
-      break;
-    }
-    query.remove_prefix(amp + 1);
-  }
-  return {};
-}
-
 long parse_long(std::string_view text, long fallback) {
   long value = fallback;
   auto [ptr, error] = std::from_chars(text.data(), text.data() + text.size(), value);
@@ -56,7 +40,7 @@ void register_demo_routes(server& app) {
   // A timer suspension: while this request sleeps, every other connection
   // keeps making progress on the same thread.
   app.routes().add("GET", "/slow", [&app](const request& req) -> task<response> {
-    long requested = parse_long(query_value(req.query(), "ms"), 100);
+    long requested = parse_long(req.query_param("ms"), 100);
     auto delay = std::chrono::milliseconds(
         std::clamp<long>(requested, 0, kMaxSlowDelay.count()));
     co_await app.loop().sleep_for(delay);
@@ -66,7 +50,7 @@ void register_demo_routes(server& app) {
   // The blocking bridge. The SDK call has no fd and cannot be made async, so
   // it runs on the pool while the loop keeps serving.
   app.routes().add("GET", "/legacy", [&app](const request& req) -> task<response> {
-    std::string key(query_value(req.query(), "key"));
+    std::string key(req.query_param("key"));
     auto result = co_await blocking_call(app.pool(), app.loop(),
                                          [key] { return legacy::fetch(key); });
     if (!result) {

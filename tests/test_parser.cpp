@@ -176,3 +176,43 @@ TEST_CASE("a body larger than the limit is refused with 413") {
   REQUIRE(result.status == head_status::invalid);
   REQUIRE(result.error_status == 413);
 }
+
+TEST_CASE("query parameters are percent-decoded") {
+  auto result = parse("GET /x?name=a%20b&plus=a+b&slash=%2F&upper=%41 HTTP/1.1\r\nHost: x\r\n\r\n");
+
+  REQUIRE(result.status == head_status::complete);
+  REQUIRE(result.head.query_param("name") == "a b");
+  REQUIRE(result.head.query_param("plus") == "a b");
+  REQUIRE(result.head.query_param("slash") == "/");
+  REQUIRE(result.head.query_param("upper") == "A");
+}
+
+TEST_CASE("a query parameter may have no value and a missing key is empty") {
+  auto result = parse("GET /x?flag&x=1&x=2 HTTP/1.1\r\nHost: x\r\n\r\n");
+
+  REQUIRE(result.head.query_param("flag").empty());
+  REQUIRE(result.head.query_param("x") == "1");
+  REQUIRE(result.head.query_param("absent").empty());
+}
+
+TEST_CASE("query() still returns the raw, undecoded string") {
+  auto result = parse("GET /x?a=b%20c HTTP/1.1\r\nHost: x\r\n\r\n");
+
+  REQUIRE(result.head.query() == "a=b%20c");
+  REQUIRE(result.head.query_param("a") == "b c");
+}
+
+TEST_CASE("a malformed percent escape is left alone") {
+  auto result = parse("GET /x?a=%zz HTTP/1.1\r\nHost: x\r\n\r\n");
+
+  REQUIRE(result.head.query_param("a") == "%zz");
+}
+
+TEST_CASE("an empty or absent query yields no parameters") {
+  auto empty = parse("GET /x? HTTP/1.1\r\nHost: x\r\n\r\n");
+  auto absent = parse("GET /x HTTP/1.1\r\nHost: x\r\n\r\n");
+
+  REQUIRE(empty.status == head_status::complete);
+  REQUIRE(empty.head.query_param("x").empty());
+  REQUIRE(absent.head.query_param("x").empty());
+}

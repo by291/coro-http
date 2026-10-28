@@ -5,7 +5,8 @@
   "description": "A coroutine-driven HTTP/1.1 server demo",
   "builtin-baseline": "5363acb796e576328288fae60c25304e227e9839",
   "dependencies": [
-    "picohttpparser"
+    "picohttpparser",
+    "uriparser"
   ],
   "features": {
     "tests": {
