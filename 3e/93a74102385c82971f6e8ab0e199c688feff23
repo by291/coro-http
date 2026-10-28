@@ -1,0 +1,24 @@
+src/runtime/task.h
+  s_959c1c5583842f::t_2b89aadab0b162 3
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "3e93a74102385c82971f6e8ab0e199c688feff23",
+  "prompts": {},
+  "humans": {
+    "h_30991b93f7ddc4": {
+      "author": "wangliang477 <wangliang477@jd.com>"
+    }
+  },
+  "sessions": {
+    "s_959c1c5583842f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "df17cd8c-eea9-4bf8-ac57-9111c7643a9c",
+        "model": "deepseek-v4-flash"
+      },
+      "human_author": "by291 <bystander291@gmail.com>"
+    }
+  }
+}
