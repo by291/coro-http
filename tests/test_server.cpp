@@ -186,173 +186,182 @@ void add_hello_route(server& app) {
 
 }  // namespace
 
+// Every server-level test runs once per backend this build can offer. On macOS
+// that is readiness only; on Linux it is readiness plus io_uring when the
+// kernel allows a ring. The body may adjust the config it receives.
+template <class Body>
+void for_each_backend(Body&& body) {
+  SECTION("readiness") {
+    server_config config = test_config();
+    config.backend = coro_http::io_backend::readiness;
+    body(config);
+  }
+#if defined(CORO_HTTP_HAVE_IO_URING)
+  SECTION("io_uring") {
+    server_config config = test_config();
+    config.backend = coro_http::io_backend::uring;
+    try {
+      body(config);
+    } catch (const std::runtime_error& error) {
+      SKIP(std::string("io_uring is unavailable: ") + error.what());
+    }
+  }
+#endif
+}
+
 TEST_CASE("serves a GET over a real socket") {
-  running_server fixture;
-  add_hello_route(fixture.app());
-  fixture.start();
+  for_each_backend([](server_config config) {
+    running_server fixture(std::move(config));
+    add_hello_route(fixture.app());
+    fixture.start();
 
-  http_client client(fixture.port());
-  client.send(get_request("/hello"));
-  const std::string wire = client.read_response();
+    http_client client(fixture.port());
+    client.send(get_request("/hello"));
+    const std::string wire = client.read_response();
 
-  REQUIRE(wire.starts_with("HTTP/1.1 200 OK\r\n"));
-  REQUIRE(wire.ends_with("hello\n"));
+    REQUIRE(wire.starts_with("HTTP/1.1 200 OK\r\n"));
+    REQUIRE(wire.ends_with("hello\n"));
+  });
 }
 
 TEST_CASE("keeps a connection alive for a second request") {
-  running_server fixture;
-  add_hello_route(fixture.app());
-  fixture.start();
+  for_each_backend([](server_config config) {
+    running_server fixture(std::move(config));
+    add_hello_route(fixture.app());
+    fixture.start();
 
-  http_client client(fixture.port());
-  client.send(get_request("/hello"));
-  REQUIRE(client.read_response().ends_with("hello\n"));
+    http_client client(fixture.port());
+    client.send(get_request("/hello"));
+    REQUIRE(client.read_response().ends_with("hello\n"));
 
-  client.send(get_request("/hello"));
-  REQUIRE(client.read_response().ends_with("hello\n"));
+    client.send(get_request("/hello"));
+    REQUIRE(client.read_response().ends_with("hello\n"));
+  });
 }
 
 TEST_CASE("POST bodies reach the handler") {
-  running_server fixture;
-  fixture.app().routes().add("POST", "/echo", [](const request& req) -> task<response> {
-    co_return response::with_text(req.body);
+  for_each_backend([](server_config config) {
+    running_server fixture(std::move(config));
+    fixture.app().routes().add("POST", "/echo", [](const request& req) -> task<response> {
+      co_return response::with_text(req.body);
+    });
+    fixture.start();
+
+    http_client client(fixture.port());
+    const std::string body = "payload";
+    client.send("POST /echo HTTP/1.1\r\nHost: test\r\nContent-Length: " +
+                std::to_string(body.size()) + "\r\n\r\n" + body);
+
+    REQUIRE(client.read_response().ends_with(body));
   });
-  fixture.start();
-
-  http_client client(fixture.port());
-  const std::string body = "payload";
-  client.send("POST /echo HTTP/1.1\r\nHost: test\r\nContent-Length: " +
-              std::to_string(body.size()) + "\r\n\r\n" + body);
-
-  REQUIRE(client.read_response().ends_with(body));
 }
 
 TEST_CASE("unknown paths and methods get the right status") {
-  running_server fixture;
-  add_hello_route(fixture.app());
-  fixture.start();
+  for_each_backend([](server_config config) {
+    running_server fixture(std::move(config));
+    add_hello_route(fixture.app());
+    fixture.start();
 
-  http_client client(fixture.port());
-  client.send(get_request("/missing"));
-  REQUIRE(client.read_response().starts_with("HTTP/1.1 404 Not Found\r\n"));
+    http_client client(fixture.port());
+    client.send(get_request("/missing"));
+    REQUIRE(client.read_response().starts_with("HTTP/1.1 404 Not Found\r\n"));
 
-  client.send("DELETE /hello HTTP/1.1\r\nHost: test\r\n\r\n");
-  const std::string wire = client.read_response();
-  REQUIRE(wire.starts_with("HTTP/1.1 405 Method Not Allowed\r\n"));
-  REQUIRE(wire.find("Allow: GET") != std::string::npos);
+    client.send("DELETE /hello HTTP/1.1\r\nHost: test\r\n\r\n");
+    const std::string wire = client.read_response();
+    REQUIRE(wire.starts_with("HTTP/1.1 405 Method Not Allowed\r\n"));
+    REQUIRE(wire.find("Allow: GET") != std::string::npos);
+  });
 }
 
 TEST_CASE("a slow handler does not block other connections") {
-  running_server fixture;
-  add_hello_route(fixture.app());
-  fixture.app().routes().add("GET", "/slow", [&app = fixture.app()](const request&) -> task<response> {
-    co_await app.loop().sleep_for(300ms);
-    co_return response::with_text("slow\n");
+  for_each_backend([](server_config config) {
+    running_server fixture(std::move(config));
+    add_hello_route(fixture.app());
+    fixture.app().routes().add("GET", "/slow",
+                               [&app = fixture.app()](const request&) -> task<response> {
+                                 co_await app.loop().sleep_for(300ms);
+                                 co_return response::with_text("slow\n");
+                               });
+    fixture.start();
+
+    http_client slow(fixture.port());
+    slow.send(get_request("/slow"));
+    std::this_thread::sleep_for(30ms);
+
+    http_client fast(fixture.port());
+    const auto started = std::chrono::steady_clock::now();
+    fast.send(get_request("/hello"));
+    REQUIRE(fast.read_response().ends_with("hello\n"));
+    const auto elapsed = std::chrono::steady_clock::now() - started;
+
+    REQUIRE(elapsed < 250ms);
+    REQUIRE(slow.read_response().ends_with("slow\n"));
   });
-  fixture.start();
-
-  http_client slow(fixture.port());
-  slow.send(get_request("/slow"));
-  std::this_thread::sleep_for(30ms);
-
-  http_client fast(fixture.port());
-  const auto started = std::chrono::steady_clock::now();
-  fast.send(get_request("/hello"));
-  REQUIRE(fast.read_response().ends_with("hello\n"));
-  const auto elapsed = std::chrono::steady_clock::now() - started;
-
-  REQUIRE(elapsed < 250ms);
-  REQUIRE(slow.read_response().ends_with("slow\n"));
 }
 
 TEST_CASE("blocking_call works from a handler") {
-  running_server fixture;
-  fixture.app().routes().add("GET", "/work", [&app = fixture.app()](const request&) -> task<response> {
-    auto result = co_await coro_http::blocking_call(app.pool(), app.loop(),
-                                                    [] { return std::string("from-worker"); });
-    if (!result) {
-      co_return response::with_status(503);
-    }
-    co_return response::with_text(*result);
-  });
-  fixture.start();
+  for_each_backend([](server_config config) {
+    running_server fixture(std::move(config));
+    fixture.app().routes().add("GET", "/work",
+                               [&app = fixture.app()](const request&) -> task<response> {
+                                 auto result = co_await coro_http::blocking_call(
+                                     app.pool(), app.loop(),
+                                     [] { return std::string("from-worker"); });
+                                 if (!result) {
+                                   co_return response::with_status(503);
+                                 }
+                                 co_return response::with_text(*result);
+                               });
+    fixture.start();
 
-  http_client client(fixture.port());
-  client.send(get_request("/work"));
-  REQUIRE(client.read_response().ends_with("from-worker"));
+    http_client client(fixture.port());
+    client.send(get_request("/work"));
+    REQUIRE(client.read_response().ends_with("from-worker"));
+  });
 }
 
 TEST_CASE("an oversized body is refused with 413") {
-  server_config config = test_config();
-  config.max_body_bytes = 32;
-  running_server fixture(config);
-  fixture.start();
+  for_each_backend([](server_config config) {
+    config.max_body_bytes = 32;
+    running_server fixture(std::move(config));
+    fixture.start();
 
-  http_client client(fixture.port());
-  client.send("POST /echo HTTP/1.1\r\nHost: test\r\nContent-Length: 33\r\n\r\n");
+    http_client client(fixture.port());
+    client.send("POST /echo HTTP/1.1\r\nHost: test\r\nContent-Length: 33\r\n\r\n");
 
-  const std::string wire = client.read_response();
-  REQUIRE(wire.starts_with("HTTP/1.1 413 Payload Too Large\r\n"));
+    const std::string wire = client.read_response();
+    REQUIRE(wire.starts_with("HTTP/1.1 413 Payload Too Large\r\n"));
+  });
 }
 
 TEST_CASE("a malformed request gets a 400 and the connection closes") {
-  running_server fixture;
-  add_hello_route(fixture.app());
-  fixture.start();
+  for_each_backend([](server_config config) {
+    running_server fixture(std::move(config));
+    add_hello_route(fixture.app());
+    fixture.start();
 
-  http_client client(fixture.port());
-  client.send("BROKEN\r\n\r\n");
+    http_client client(fixture.port());
+    client.send("BROKEN\r\n\r\n");
 
-  REQUIRE(client.read_response().starts_with("HTTP/1.1 400 Bad Request\r\n"));
-  REQUIRE(client.connection_closed());
+    REQUIRE(client.read_response().starts_with("HTTP/1.1 400 Bad Request\r\n"));
+    REQUIRE(client.connection_closed());
+  });
 }
 
 TEST_CASE("shutdown returns while an idle keep-alive connection is open") {
-  running_server fixture;
-  add_hello_route(fixture.app());
-  fixture.start();
+  for_each_backend([](server_config config) {
+    running_server fixture(std::move(config));
+    add_hello_route(fixture.app());
+    fixture.start();
 
-  http_client client(fixture.port());
-  client.send(get_request("/hello"));
-  REQUIRE(client.read_response().ends_with("hello\n"));
+    http_client client(fixture.port());
+    client.send(get_request("/hello"));
+    REQUIRE(client.read_response().ends_with("hello\n"));
 
-  const auto started = std::chrono::steady_clock::now();
-  fixture.stop();
-  const auto elapsed = std::chrono::steady_clock::now() - started;
+    const auto started = std::chrono::steady_clock::now();
+    fixture.stop();
+    const auto elapsed = std::chrono::steady_clock::now() - started;
 
-  REQUIRE(elapsed < 2s);
+    REQUIRE(elapsed < 2s);
+  });
 }
-
-TEST_CASE("the readiness backend serves a request") {
-  server_config config = test_config();
-  config.backend = coro_http::io_backend::readiness;
-
-  running_server fixture(config);
-  add_hello_route(fixture.app());
-  fixture.start();
-
-  http_client client(fixture.port());
-  client.send(get_request("/hello"));
-  REQUIRE(client.read_response().ends_with("hello\n"));
-}
-
-#if defined(CORO_HTTP_HAVE_IO_URING)
-TEST_CASE("the io_uring backend serves a request when the kernel allows it") {
-  server_config config = test_config();
-  config.backend = coro_http::io_backend::uring;
-
-  std::unique_ptr<running_server> fixture;
-  try {
-    fixture = std::make_unique<running_server>(config);
-  } catch (const std::runtime_error&) {
-    SKIP("io_uring is built but not available on this kernel");
-  }
-
-  add_hello_route(fixture->app());
-  fixture->start();
-
-  http_client client(fixture->port());
-  client.send(get_request("/hello"));
-  REQUIRE(client.read_response().ends_with("hello\n"));
-}
-#endif

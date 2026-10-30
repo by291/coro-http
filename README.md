@@ -23,7 +23,7 @@ export VCPKG_ROOT=/path/to/vcpkg
 cmake --preset dev
 cmake --build build/dev
 
-# 跑测试（macOS 69 / Linux 70 个用例）
+# 跑测试（68 个用例；服务端用例在两种后端上各跑一遍）
 ctest --test-dir build/dev --output-on-failure
 
 # 跑服务（Linux 上可加 --backend uring 试试 io_uring）
@@ -141,7 +141,7 @@ bench/bench.sh http://127.0.0.1:8080/hello 20000 100
 ## 测试与检查
 
 ```bash
-ctest --test-dir build/dev --output-on-failure   # macOS 69 / Linux 70 个用例
+ctest --test-dir build/dev --output-on-failure   # 68 个用例
 
 cmake --preset asan && cmake --build build/asan
 ./build/asan/tests/coro_http_tests               # 内存/UB
@@ -158,7 +158,7 @@ sanitizer 构建用 `RelWithDebInfo` + `-O1`：比 `-O0` 快得多，栈回溯�
 测试分三层：
 
 - **单元**：`Task` 生命周期与深链（含一条直接测量析构嵌套深度的回归测试）、事件循环（fd 就绪、超时、跨线程 post）、线程池饱和、解析器表驱动、路由与响应序列化。
-- **后端覆盖**：集成测试默认用 `auto`（Linux 上即 io_uring），另有显式的 readiness 与 uring 用例；内核不支持 io_uring 时，显式用例会 `SKIP`。
+- **后端覆盖**：每个服务端集成用例都通过 `SECTION` 在 readiness 和 io_uring 上各跑一遍（构建含 uring 时）；内核不允许建环时，uring 分支显示为 `SKIP`，readiness 分支仍然完整。
 - **集成**：真起一个服务，用阻塞 socket 当客户端，覆盖 keep-alive、POST、404/405、并发、413、400、优雅关闭。
 - **微基准**：解析与序列化，方便以后替换实现时做对照。
 
@@ -212,8 +212,8 @@ spawn(loop, [&]() -> task<void> { co_await loop.sleep_for(1h); }());
 
 | 平台 | 后端 | 编译器 | 结果 |
 |---|---|---|---|
-| macOS 27.2（Apple Silicon） | kqueue | Apple clang 21 | `dev` / `ci` / `asan` / `tsan` 四套构建各 69/69 |
-| Ubuntu 26.04（独立 Lima VM） | epoll + io_uring | GCC 15.2 | Release 70/70（两个后端都跑）；Debug 70/70（跳过 2 条栈测量）；ASan 70/70（跳过 3 条深链测试） |
+| macOS 27.2（Apple Silicon） | kqueue | Apple clang 21 | `dev` / `ci` / `asan` / `tsan` 四套构建各 68/68 |
+| Ubuntu 26.04（独立 Lima VM） | epoll + io_uring | GCC 15.2 | Release 68/68（每个服务端用例两个后端各跑一遍）；Debug 68/68（跳过 2 条栈测量）；ASan 68/68（跳过 3 条深链测试） |
 
 - 要求 C++23（协程 + `std::expected`）；Linux 侧 GCC 13+ / Clang **19+**，io_uring 引擎需要 liburing（由 vcpkg 的 Linux 依赖提供）。
   clang 18 把 `__cpp_concepts` 报成 `201907L`，而 libstdc++ 用它来决定是否暴露
