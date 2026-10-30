@@ -14,7 +14,7 @@ namespace coro_http {
 session::session(event_loop& loop, int fd, const router& routes, const server_config& config,
                  server_stats& stats)
     : loop_(loop),
-      socket_(loop, fd),
+      socket_(loop.engine(), fd),
       routes_(routes),
       config_(config),
       stats_(stats) {

@@ -9,7 +9,7 @@ app/     路由表、handler、模拟的老式同步 SDK
  |
 http/    连接会话协程、增量解析、request/response、优雅关闭
  |
-net/     事件循环（kqueue / epoll）、fd 就绪、定时器、socket、accept
+net/     事件循环、io_engine（kqueue/epoll 就绪 | io_uring 完成）、定时器、socket、accept
  |
 runtime/ Task<T>、调度器接口、定时器等待、线程池、blocking_call
 ```
@@ -23,10 +23,10 @@ export VCPKG_ROOT=/path/to/vcpkg
 cmake --preset dev
 cmake --build build/dev
 
-# 跑测试（62 个用例）
+# 跑测试（macOS 69 / Linux 70 个用例）
 ctest --test-dir build/dev --output-on-failure
 
-# 跑服务
+# 跑服务（Linux 上可加 --backend uring 试试 io_uring）
 ./build/dev/coro-http --port 8080
 # 或者优化版
 cmake --preset release && cmake --build build/release
@@ -92,6 +92,28 @@ ab -n 20000 -c 100 -k http://127.0.0.1:8080/hello
 bench/bench.sh http://127.0.0.1:8080/hello 20000 100
 ```
 
+## 两种 IO 模型
+
+`net/io_engine.h` 是分界线。同一个 session 协程在两种引擎上跑，连接层以上一行不改：
+
+| 引擎 | 平台 | 模型 |
+|---|---|---|
+| readiness | macOS kqueue / Linux epoll | 非阻塞 syscall；`EAGAIN` 时挂到「fd 可读/可写」，醒来重试 |
+| io_uring | Linux（liburing） | 提交操作；CQE 到达时恢复。超时是另一个 SQE，和 I/O 赛跑 |
+
+选择：`--backend auto|readiness|uring`。默认 `auto`：Linux 上构建包含 io_uring 且内核支持时选它，
+否则回退到 readiness。显式要求 `uring` 但不可用时会报错，不会悄悄回退。
+
+同一台 Linux VM（4 vCPU、loopback、Release、`ab -n 20000 -c 100 -k`，预热后 5 次中位数）：
+
+| 后端 | Requests/sec |
+|---|---|
+| epoll readiness | 188,606 |
+| io_uring | 269,607 |
+
+差距主要来自就绪模型每轮都要「poll + 一次 `recv`/`send` syscall」，而 io_uring 把提交和完成
+合并在同一个环里。（这两个数字和上面 macOS 的数字不是同一台机器，不能直接横向比较。）
+
 ## 它做对了什么
 
 - **单线程 reactor**：所有 handler、所有协程都在事件循环线程上跑。唯一的其他线程是 `blocking_call` 的线程池。
@@ -100,6 +122,7 @@ bench/bench.sh http://127.0.0.1:8080/hello 20000 100
 - **定时器不进后端**：epoll 没有原生定时器，kqueue 有，因此统一成「最小堆 + poll 超时」，两个后端语义一致。取消采用惰性删除，并在死条目超过活条目时重建堆，避免高并发下堆随「速率 × 超时」增长（有测试）。
 - **协议策略集中**：Host 必填、Content-Length / Transfer-Encoding 冲突、重复 Content-Length、obs-fold、各类上限（414 / 431 / 413 / 501 / 505）都在 `parse_request_head()` 里，解析器是纯函数，表驱动测试覆盖畸形输入。
 - **阻塞有边界**：`blocking_call` 是唯一允许阻塞的出口；池满时立刻返回错误（应用层转 503），事件循环永不等待 worker。`grep blocking_call` 即可审计全部阻塞点。
+- **IO 引擎可互换**：连接层只认 `io_engine`；epoll/kqueue 的「就绪 + syscall」和 io_uring 的「提交 + 完成」可以整体替换。运行时探测内核能力，不可用时回退。
 - **关闭不硬拔电源**：停止 accept → 对所有连接 `shutdown(SHUT_RD)` → 卡在 read 的协程以 EOF 自然唤醒并退栈 → 宽限期后兜底关 socket。整个过程不会手动 resume 别人的协程帧。
 
 ## 阅读顺序
@@ -118,7 +141,7 @@ bench/bench.sh http://127.0.0.1:8080/hello 20000 100
 ## 测试与检查
 
 ```bash
-ctest --test-dir build/dev --output-on-failure   # 62 个用例
+ctest --test-dir build/dev --output-on-failure   # macOS 69 / Linux 70 个用例
 
 cmake --preset asan && cmake --build build/asan
 ./build/asan/tests/coro_http_tests               # 内存/UB
@@ -135,6 +158,7 @@ sanitizer 构建用 `RelWithDebInfo` + `-O1`：比 `-O0` 快得多，栈回溯�
 测试分三层：
 
 - **单元**：`Task` 生命周期与深链（含一条直接测量析构嵌套深度的回归测试）、事件循环（fd 就绪、超时、跨线程 post）、线程池饱和、解析器表驱动、路由与响应序列化。
+- **后端覆盖**：集成测试默认用 `auto`（Linux 上即 io_uring），另有显式的 readiness 与 uring 用例；内核不支持 io_uring 时，显式用例会 `SKIP`。
 - **集成**：真起一个服务，用阻塞 socket 当客户端，覆盖 keep-alive、POST、404/405、并发、413、400、优雅关闭。
 - **微基准**：解析与序列化，方便以后替换实现时做对照。
 
@@ -167,6 +191,8 @@ TLS、HTTP/2、WebSocket、静态文件、模板、chunked 请求体、多 react
   每跳 64 字节，带 sanitizer 时即使 `-O2` 也有 64–71 字节。10 万层在 GCC `-O0` 下
   需要约 6.4MB 栈，因此日常测试用 5 万层（约 3.2MB）；带 sanitizer 的 GCC 构建里
   连 5 万层也会跳过。实测数据见 [docs/coroutines.md](docs/coroutines.md)。
+- **`event_loop::readable()` 是就绪引擎的原语**：io_uring 后端下不会工作。上层（socket/session）
+  只通过 `io_engine` 做 IO；信号处理也用 `sigwait`，与后端无关。
 - **挂起链的销毁是递归的**：正常完成时子帧在 `await_resume` 里逐层释放；但一条链
   若在挂起状态下被销毁，帧析构会沿链递归。本项目实际的 await 链只有三层左右。
 
@@ -186,10 +212,10 @@ spawn(loop, [&]() -> task<void> { co_await loop.sleep_for(1h); }());
 
 | 平台 | 后端 | 编译器 | 结果 |
 |---|---|---|---|
-| macOS 27.2（Apple Silicon） | kqueue | Apple clang 21 | `dev` / `ci` / `asan` / `tsan` 四套构建各 62/62 |
-| Ubuntu 26.04（独立 Lima VM） | epoll | GCC 15.2 | Release 62/62；Debug 62/62（跳过 2 条栈测量）；ASan 62/62（跳过 3 条深链测试） |
+| macOS 27.2（Apple Silicon） | kqueue | Apple clang 21 | `dev` / `ci` / `asan` / `tsan` 四套构建各 69/69 |
+| Ubuntu 26.04（独立 Lima VM） | epoll + io_uring | GCC 15.2 | Release 70/70（两个后端都跑）；Debug 70/70（跳过 2 条栈测量）；ASan 70/70（跳过 3 条深链测试） |
 
-- 要求 C++23（协程 + `std::expected`）；Linux 侧 GCC 13+ / Clang **19+**。
+- 要求 C++23（协程 + `std::expected`）；Linux 侧 GCC 13+ / Clang **19+**，io_uring 引擎需要 liburing（由 vcpkg 的 Linux 依赖提供）。
   clang 18 把 `__cpp_concepts` 报成 `201907L`，而 libstdc++ 用它来决定是否暴露
   `<expected>`，因此 clang 18 + libstdc++ 上 `std::expected` 根本不可见。
 - 构建：CMake ≥ 3.25 + vcpkg manifest，presets：`dev` / `release` / `ci` / `asan` / `tsan`。

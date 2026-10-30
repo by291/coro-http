@@ -6,19 +6,13 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-#include <cerrno>
 #include <stdexcept>
 #include <utility>
 
 namespace coro_http {
 
-namespace {
-
-std::error_code current_error() { return std::error_code(errno, std::system_category()); }
-
-}  // namespace
-
-acceptor::acceptor(event_loop& loop, std::string host, std::uint16_t port, int backlog) : loop_(loop) {
+acceptor::acceptor(event_loop& loop, std::string host, std::uint16_t port, int backlog)
+    : engine_(loop.engine()) {
   sockaddr_in address{};
   address.sin_family = AF_INET;
   address.sin_port = htons(port);
@@ -64,29 +58,15 @@ acceptor::acceptor(event_loop& loop, std::string host, std::uint16_t port, int b
 acceptor::~acceptor() { close(); }
 
 task<std::expected<int, std::error_code>> acceptor::accept() {
-  for (;;) {
-    if (fd_ < 0) {
-      co_return std::unexpected(std::make_error_code(std::errc::bad_file_descriptor));
-    }
-
-    int client = ::accept(fd_, nullptr, nullptr);
-    if (client >= 0) {
-      co_return client;
-    }
-    if (errno == EINTR) {
-      continue;
-    }
-    if (errno == EAGAIN || errno == EWOULDBLOCK) {
-      co_await loop_.readable(fd_);
-      continue;
-    }
-    co_return std::unexpected(current_error());
+  if (fd_ < 0) {
+    co_return std::unexpected(std::make_error_code(std::errc::bad_file_descriptor));
   }
+  co_return co_await engine_.accept(fd_, io_engine::clock::time_point::max());
 }
 
 void acceptor::close() {
   if (fd_ >= 0) {
-    loop_.unwatch(fd_);
+    engine_.cancel(fd_);
     ::close(fd_);
     fd_ = -1;
   }

@@ -6,11 +6,17 @@
 #include <cstdint>
 #include <string>
 
+#include "net/io_engine.h"
+
 namespace coro_http {
 
 struct server_config {
   std::string host{"127.0.0.1"};
   std::uint16_t port{8080};
+
+  // auto_select picks io_uring when built with it and the kernel supports it,
+  // otherwise the epoll/kqueue readiness engine.
+  io_backend backend{io_backend::auto_select};
 
   // Threads that exist only for blocking_call().
   std::size_t workers{2};

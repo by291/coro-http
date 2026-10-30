@@ -55,7 +55,7 @@ struct pipe_pair {
 
 TEST_CASE("readable wait resumes when data is already available") {
   pipe_pair pipe;
-  event_loop loop;
+  event_loop loop(coro_http::io_backend::readiness);
   bool resumed = false;
 
   auto body = [&]() -> task<void> {
@@ -73,7 +73,7 @@ TEST_CASE("readable wait resumes when data is already available") {
 
 TEST_CASE("a fd wait times out without any traffic") {
   pipe_pair pipe;
-  event_loop loop;
+  event_loop loop(coro_http::io_backend::readiness);
   bool ready = true;
   std::chrono::steady_clock::duration elapsed{};
 
@@ -92,7 +92,7 @@ TEST_CASE("a fd wait times out without any traffic") {
 }
 
 TEST_CASE("sleep_for resumes after the deadline") {
-  event_loop loop;
+  event_loop loop(coro_http::io_backend::readiness);
   std::chrono::steady_clock::duration elapsed{};
 
   auto body = [&]() -> task<void> {
@@ -109,7 +109,7 @@ TEST_CASE("sleep_for resumes after the deadline") {
 }
 
 TEST_CASE("timers fire in deadline order") {
-  event_loop loop;
+  event_loop loop(coro_http::io_backend::readiness);
   std::vector<int> order;
 
   auto later = [&]() -> task<void> {
@@ -131,7 +131,7 @@ TEST_CASE("timers fire in deadline order") {
 }
 
 TEST_CASE("post from another thread wakes the loop") {
-  event_loop loop;
+  event_loop loop(coro_http::io_backend::readiness);
   bool resumed_early = false;
 
   auto body = [&]() -> task<void> {
@@ -159,7 +159,7 @@ TEST_CASE("post from another thread wakes the loop") {
 }
 
 TEST_CASE("cancelled timers do not pile up in the heap") {
-  event_loop loop;
+  event_loop loop(coro_http::io_backend::readiness);
 
   std::vector<coro_http::timer_id> ids;
   ids.reserve(1000);
@@ -176,7 +176,7 @@ TEST_CASE("cancelled timers do not pile up in the heap") {
 }
 
 TEST_CASE("stop makes run return") {
-  event_loop loop;
+  event_loop loop(coro_http::io_backend::readiness);
   bool ran = false;
 
   auto body = [&]() -> task<void> {

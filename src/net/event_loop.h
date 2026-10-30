@@ -2,10 +2,11 @@
 
 #include <chrono>
 #include <coroutine>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 
-#include "net/poller.h"
+#include "net/io_engine.h"
 #include "runtime/scheduler.h"
 
 namespace coro_http {
@@ -17,6 +18,9 @@ using timer_id = std::uint64_t;
 // Suspends until the fd reports the requested interest or the deadline passes.
 // The registration is one-shot from the caller's point of view: it is removed
 // when the awaiter resumes, even though the backend is level-triggered.
+//
+// Readiness awaiters belong to the readiness engine. A completion engine
+// (io_uring) exposes operations through io_engine instead.
 class io_wait_awaiter {
 public:
   io_wait_awaiter(event_loop& loop, int fd, unsigned interests,
@@ -58,11 +62,14 @@ private:
 
 // Single-threaded reactor. All coroutines run on the thread that calls run();
 // the only cross-thread entry point is post().
+//
+// The loop owns timers, the posted queue and the ready batch; the io_engine
+// owns the kernel-facing model (readiness or completions).
 class event_loop final : public scheduler {
 public:
   using clock = std::chrono::steady_clock;
 
-  event_loop();
+  explicit event_loop(io_backend backend = io_backend::auto_select);
   ~event_loop() override;
 
   event_loop(const event_loop&) = delete;
@@ -71,12 +78,12 @@ public:
   // Blocks until stop() is called. Nested calls are not supported.
   void run();
 
-  // Safe from any thread, including a signal-adjacent context is *not* what
-  // this promises: call it from ordinary thread code only.
+  // Safe from any thread.
   void stop();
 
   void post(std::coroutine_handle<> handle) override;
 
+  // Readiness registration; used by the readiness engine and its awaiters.
   void watch(int fd, unsigned interests, std::coroutine_handle<> handle);
   void unwatch(int fd);
 
@@ -96,6 +103,20 @@ public:
   // Diagnostics: how many slots the deadline heap currently holds. Cancelled
   // entries are compacted away, so this stays proportional to live timers.
   std::size_t timer_entry_count() const;
+
+  // --- engine-facing API, loop thread only ---
+
+  [[nodiscard]] io_engine& engine();
+  [[nodiscard]] const io_engine& engine() const;
+
+  // Queues a coroutine for the current run() batch, de-duplicating repeats.
+  void push_ready(std::coroutine_handle<> handle);
+
+  // Removes and returns the fd's pending readiness waiter, if any.
+  [[nodiscard]] std::coroutine_handle<> take_waiter(int fd);
+
+  [[nodiscard]] int wakeup_fd() const;
+  void drain_wakeup();
 
 private:
   struct impl;

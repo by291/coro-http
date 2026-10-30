@@ -1,62 +1,28 @@
-#include <fcntl.h>
-#include <unistd.h>
+#include <pthread.h>
 
-#include <csignal>
 #include <charconv>
+#include <csignal>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
 #include <string>
 #include <string_view>
+#include <thread>
 
 #include "app/handlers.h"
 #include "http/server.h"
-#include "runtime/spawn.h"
 
 namespace {
 
-int g_signal_pipe[2] = {-1, -1};
-
-// The only thing a signal handler is allowed to do here: write one byte.
-// Everything else happens back on the event loop thread.
-extern "C" void handle_signal(int) {
-  const char byte = 1;
-  [[maybe_unused]] ssize_t written = ::write(g_signal_pipe[1], &byte, 1);
-}
-
 void print_usage(const char* program) {
-  std::printf("usage: %s [--host H] [--port N] [--threads N] [--log]\n", program);
+  std::printf("usage: %s [--host H] [--port N] [--threads N] [--backend auto|readiness|uring] [--log]\n",
+              program);
 }
 
 bool parse_unsigned(std::string_view text, unsigned long& out) {
   auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), out);
   return error == std::errc{} && end == text.data() + text.size();
-}
-
-coro_http::task<void> watch_for_signal(coro_http::server& app) {
-  co_await app.loop().readable(g_signal_pipe[0]);
-  app.request_stop();
-  co_return;
-}
-
-bool install_signal_pipe() {
-  if (::pipe(g_signal_pipe) != 0) {
-    return false;
-  }
-  for (int fd : g_signal_pipe) {
-    int flags = ::fcntl(fd, F_GETFL, 0);
-    if (flags >= 0) {
-      ::fcntl(fd, F_SETFL, flags | O_NONBLOCK);
-    }
-  }
-  struct sigaction action {};
-  action.sa_handler = handle_signal;
-  sigemptyset(&action.sa_mask);
-  action.sa_flags = SA_RESTART;
-  ::sigaction(SIGINT, &action, nullptr);
-  ::sigaction(SIGTERM, &action, nullptr);
-  return true;
 }
 
 }  // namespace
@@ -82,6 +48,19 @@ int main(int argc, char** argv) {
         return 1;
       }
       config.workers = static_cast<std::size_t>(value);
+    } else if (argument == "--backend" && i + 1 < argc) {
+      std::string_view name = argv[++i];
+      if (name == "auto") {
+        config.backend = coro_http::io_backend::auto_select;
+      } else if (name == "readiness") {
+        config.backend = coro_http::io_backend::readiness;
+      } else if (name == "uring") {
+        config.backend = coro_http::io_backend::uring;
+      } else {
+        std::fprintf(stderr, "unknown backend: %s\n", argv[i]);
+        print_usage(argv[0]);
+        return 1;
+      }
     } else if (argument == "--log") {
       config.access_log = true;
     } else if (argument == "--help" || argument == "-h") {
@@ -95,8 +74,16 @@ int main(int argc, char** argv) {
 
   std::signal(SIGPIPE, SIG_IGN);
 
-  if (!install_signal_pipe()) {
-    std::fprintf(stderr, "coro-http: could not install signal handling\n");
+  // Block the termination signals in every thread (the pool threads inherit
+  // the mask) and consume them with sigwait in main. That keeps shutdown
+  // independent of the IO backend: no signal handler, no self-pipe, and no
+  // readiness awaiter that a completion engine cannot wake.
+  sigset_t signals;
+  sigemptyset(&signals);
+  sigaddset(&signals, SIGINT);
+  sigaddset(&signals, SIGTERM);
+  if (pthread_sigmask(SIG_BLOCK, &signals, nullptr) != 0) {
+    std::fprintf(stderr, "coro-http: could not block signals\n");
     return 1;
   }
 
@@ -104,12 +91,20 @@ int main(int argc, char** argv) {
     coro_http::server app(config);
     coro_http::register_demo_routes(app);
 
-    std::printf("coro-http on http://%s:%u (blocking workers: %zu)\n", config.host.c_str(),
-                app.port(), config.workers);
+    std::printf("coro-http on http://%s:%u (backend: %s, blocking workers: %zu)\n",
+                config.host.c_str(), app.port(), app.loop().engine().name(), config.workers);
     std::fflush(stdout);
 
-    coro_http::spawn(app.loop(), watch_for_signal(app));
-    app.run();
+    std::thread server_thread([&app] { app.run(); });
+
+    int received = 0;
+    if (sigwait(&signals, &received) == 0) {
+      std::printf("\nreceived signal %d, shutting down\n", received);
+      std::fflush(stdout);
+    }
+    app.request_stop();
+    server_thread.join();
+
     std::printf("stopped\n");
   } catch (const std::exception& error) {
     std::fprintf(stderr, "coro-http: %s\n", error.what());

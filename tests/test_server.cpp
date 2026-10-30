@@ -8,6 +8,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -321,3 +322,37 @@ TEST_CASE("shutdown returns while an idle keep-alive connection is open") {
 
   REQUIRE(elapsed < 2s);
 }
+
+TEST_CASE("the readiness backend serves a request") {
+  server_config config = test_config();
+  config.backend = coro_http::io_backend::readiness;
+
+  running_server fixture(config);
+  add_hello_route(fixture.app());
+  fixture.start();
+
+  http_client client(fixture.port());
+  client.send(get_request("/hello"));
+  REQUIRE(client.read_response().ends_with("hello\n"));
+}
+
+#if defined(CORO_HTTP_HAVE_IO_URING)
+TEST_CASE("the io_uring backend serves a request when the kernel allows it") {
+  server_config config = test_config();
+  config.backend = coro_http::io_backend::uring;
+
+  std::unique_ptr<running_server> fixture;
+  try {
+    fixture = std::make_unique<running_server>(config);
+  } catch (const std::runtime_error&) {
+    SKIP("io_uring is built but not available on this kernel");
+  }
+
+  add_hello_route(fixture->app());
+  fixture->start();
+
+  http_client client(fixture->port());
+  client.send(get_request("/hello"));
+  REQUIRE(client.read_response().ends_with("hello\n"));
+}
+#endif

@@ -19,6 +19,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(CORO_HTTP_BUILD_BENCH "Build micro-benchmarks" OFF)
+option(CORO_HTTP_WITH_IO_URING "Build the io_uring engine on Linux" ON)
 
 find_package(ada CONFIG REQUIRED)
 find_package(unofficial-picohttpparser CONFIG REQUIRED)
@@ -26,6 +27,7 @@ find_package(unofficial-picohttpparser CONFIG REQUIRED)
 add_library(coro_http STATIC
   src/runtime/thread_pool.cpp
   src/net/event_loop.cpp
+  src/net/readiness_engine.cpp
   src/net/wakeup_pipe.cpp
   src/net/socket.cpp
   src/net/acceptor.cpp
@@ -40,6 +42,20 @@ if(APPLE)
   target_sources(coro_http PRIVATE src/net/kqueue_backend.cpp)
 elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   target_sources(coro_http PRIVATE src/net/epoll_backend.cpp)
+  if(CORO_HTTP_WITH_IO_URING)
+    find_package(PkgConfig QUIET)
+    if(PkgConfig_FOUND)
+      pkg_check_modules(LIBURING QUIET IMPORTED_TARGET liburing)
+    endif()
+    if(LIBURING_FOUND)
+      target_sources(coro_http PRIVATE src/net/uring_engine.cpp)
+      target_link_libraries(coro_http PRIVATE PkgConfig::LIBURING)
+      target_compile_definitions(coro_http PUBLIC CORO_HTTP_HAVE_IO_URING=1)
+      message(STATUS "coro-http: io_uring engine enabled")
+    else()
+      message(STATUS "coro-http: io_uring engine disabled (liburing not found)")
+    endif()
+  endif()
 else()
   message(FATAL_ERROR "coro-http supports macOS (kqueue) and Linux (epoll) only")
 endif()

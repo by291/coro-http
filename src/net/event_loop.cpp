@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <atomic>
-#include <cerrno>
 #include <climits>
 #include <cstddef>
 #include <deque>
@@ -13,13 +12,12 @@
 #include <utility>
 #include <vector>
 
+#include "net/poller.h"
 #include "net/wakeup_pipe.h"
 
 namespace coro_http {
 
 namespace {
-
-constexpr int kMaxEvents = 64;
 
 using clock_type = std::chrono::steady_clock;
 using handle_type = std::coroutine_handle<>;
@@ -38,8 +36,8 @@ struct later_deadline {
 }  // namespace
 
 struct event_loop::impl {
-  std::unique_ptr<poller> poller_;
   wakeup_pipe wakeup_;
+  std::unique_ptr<io_engine> engine_;
 
   std::unordered_map<int, handle_type> waiters_;
 
@@ -71,30 +69,21 @@ struct event_loop::impl {
   std::deque<handle_type> posted_;
 
   std::atomic<bool> running_{false};
-  std::vector<io_event> events_{kMaxEvents};
+
+  // Coroutines the engine (and timers/posted queue) want resumed in this
+  // iteration. queued_ de-duplicates handles within one batch.
+  std::vector<handle_type> ready_;
+  std::unordered_set<const void*> queued_;
 };
 
-event_loop::event_loop() : impl_(std::make_unique<impl>()) {
-  impl_->poller_ = make_poller();
-  impl_->poller_->watch(impl_->wakeup_.read_fd(), io_read);
+event_loop::event_loop(io_backend backend) : impl_(std::make_unique<impl>()) {
+  impl_->engine_ = make_io_engine(backend, *this);
 }
 
 event_loop::~event_loop() = default;
 
 void event_loop::run() {
   impl_->running_.store(true, std::memory_order_release);
-
-  std::vector<handle_type> ready;
-  std::unordered_set<const void*> queued;
-
-  auto enqueue = [&](handle_type handle) {
-    if (!handle) {
-      return;
-    }
-    if (queued.insert(handle.address()).second) {
-      ready.push_back(handle);
-    }
-  };
 
   while (impl_->running_.load(std::memory_order_acquire)) {
     int timeout = -1;
@@ -103,6 +92,9 @@ void event_loop::run() {
       if (!impl_->posted_.empty()) {
         timeout = 0;
       }
+    }
+    if (!impl_->ready_.empty()) {
+      timeout = 0;  // somebody was queued while we were resuming last batch
     }
     if (timeout != 0 && !impl_->timers_.empty()) {
       auto now = clock_type::now();
@@ -116,25 +108,8 @@ void event_loop::run() {
       }
     }
 
-    int count = impl_->poller_->wait(impl_->events_.data(), kMaxEvents, timeout);
-    if (count < 0) {
-      if (errno == EINTR) {
-        continue;
-      }
+    if (!impl_->engine_->wait(timeout)) {
       break;
-    }
-
-    for (int i = 0; i < count; ++i) {
-      const io_event& event = impl_->events_[static_cast<std::size_t>(i)];
-      if (event.fd == impl_->wakeup_.read_fd()) {
-        impl_->wakeup_.drain();
-        continue;
-      }
-      auto waiter = impl_->waiters_.find(event.fd);
-      if (waiter != impl_->waiters_.end()) {
-        enqueue(waiter->second);
-        impl_->waiters_.erase(waiter);
-      }
     }
 
     auto now = clock_type::now();
@@ -143,7 +118,7 @@ void event_loop::run() {
       impl_->timers_.pop();
       auto waiter = impl_->timer_waiters_.find(entry.id);
       if (waiter != impl_->timer_waiters_.end()) {
-        enqueue(waiter->second);
+        push_ready(waiter->second);
         impl_->timer_waiters_.erase(waiter);
       }
     }
@@ -151,19 +126,20 @@ void event_loop::run() {
     {
       std::lock_guard lock(impl_->post_mutex_);
       for (handle_type handle : impl_->posted_) {
-        enqueue(handle);
+        push_ready(handle);
       }
       impl_->posted_.clear();
     }
 
-    // A handle can be registered for both an fd and a timer; whichever fires
-    // first resumes it, and `queued` keeps the second wakeup in this batch
-    // from resuming it again.
-    for (handle_type handle : ready) {
+    // Move the batch out: a resumed coroutine may push_ready() again (for
+    // example by closing a socket), and that belongs to the next iteration.
+    std::vector<handle_type> batch;
+    batch.swap(impl_->ready_);
+    impl_->queued_.clear();
+
+    for (handle_type handle : batch) {
       handle.resume();
     }
-    ready.clear();
-    queued.clear();
   }
 
   impl_->running_.store(false, std::memory_order_release);
@@ -184,12 +160,12 @@ void event_loop::post(std::coroutine_handle<> handle) {
 
 void event_loop::watch(int fd, unsigned interests, std::coroutine_handle<> handle) {
   impl_->waiters_[fd] = handle;
-  impl_->poller_->watch(fd, interests);
+  impl_->engine_->watch_fd(fd, interests);
 }
 
 void event_loop::unwatch(int fd) {
   impl_->waiters_.erase(fd);
-  impl_->poller_->unwatch(fd);
+  impl_->engine_->forget_fd(fd);
 }
 
 timer_id event_loop::schedule(clock::time_point deadline, std::coroutine_handle<> handle) {
@@ -213,6 +189,33 @@ void event_loop::cancel_timer(timer_id id) {
 std::size_t event_loop::timer_entry_count() const { return impl_->timers_.size(); }
 
 bool event_loop::is_running() const { return impl_->running_.load(std::memory_order_acquire); }
+
+io_engine& event_loop::engine() { return *impl_->engine_; }
+
+const io_engine& event_loop::engine() const { return *impl_->engine_; }
+
+void event_loop::push_ready(std::coroutine_handle<> handle) {
+  if (!handle) {
+    return;
+  }
+  if (impl_->queued_.insert(handle.address()).second) {
+    impl_->ready_.push_back(handle);
+  }
+}
+
+std::coroutine_handle<> event_loop::take_waiter(int fd) {
+  auto waiter = impl_->waiters_.find(fd);
+  if (waiter == impl_->waiters_.end()) {
+    return {};
+  }
+  auto handle = waiter->second;
+  impl_->waiters_.erase(waiter);
+  return handle;
+}
+
+int event_loop::wakeup_fd() const { return impl_->wakeup_.read_fd(); }
+
+void event_loop::drain_wakeup() { impl_->wakeup_.drain(); }
 
 io_wait_awaiter event_loop::readable(int fd, clock::time_point deadline) {
   return io_wait_awaiter{*this, fd, io_read, deadline};

@@ -7,12 +7,37 @@ app/       router（表驱动 + :param）、handlers、legacy_sdk
              |  只依赖 http/ 的 Request/Response 与 Task
 http/      session（连接协程）、parse_request_head、response、server
              |  依赖 net/ 的 socket/event_loop，依赖 runtime/ 的 Task
-net/       event_loop（+ kqueue/epoll 后端）、poller 接口、socket、acceptor、wakeup_pipe
-             |  实现 runtime/ 的 scheduler 接口
+net/       io_engine（readiness | io_uring）、event_loop（定时器、ready 批次）、
+           poller 接口、socket、acceptor、wakeup_pipe
+             |  event_loop 实现 runtime/ 的 scheduler 接口
 runtime/   Task<T>、promise、scheduler、spawn、sync_wait、async_event、thread_pool、blocking_call
 ```
 
 依赖方向单向向下。唯一的倒置点是 `scheduler`：`runtime/` 只声明「怎么把一个协程句柄排回循环线程」，由 `net/event_loop` 实现，因此 `runtime/` 不知道 `net/` 的存在。
+
+## IO 引擎
+
+`io_engine` 是事件循环与内核之间的缝。上层只看到四个操作：
+
+```cpp
+co_await engine.read_some(fd, buffer, deadline);
+co_await engine.write_all(fd, data, deadline);
+co_await engine.accept(listener, deadline);
+engine.cancel(fd);   // 唤醒挂在 fd 上的协程，然后才允许关闭 fd
+```
+
+每次循环迭代还会调用一次 `engine.wait(timeout_ms)`：引擎负责阻塞，并通过
+`event_loop::push_ready()` 把可以恢复的协程交回来。`watch_fd/forget_fd` 只有就绪引擎用得到，
+io_uring 的实现是空的。
+
+| 引擎 | 做法 |
+|---|---|
+| readiness | 非阻塞 syscall；`EAGAIN` 时在事件循环登记一次性的 fd 兴趣，醒来重试 |
+| io_uring | 提交操作；CQE 到达时恢复协程。带 deadline 的 I/O 还会提交一个 timeout SQE，先完成的一方取消另一方 |
+
+超时与取消是完成引擎里最绕的部分：一次逻辑读可能有两个在途操作（I/O 与定时器），
+协程必须在两个 CQE 都收割完之后才恢复，否则内核可能还在往调用方的缓冲区里写。
+`socket::close()` 先 `cancel(fd)` 再 `::close(fd)`，保证挂起的协程带着错误醒来。
 
 ## 线程模型
 
@@ -30,9 +55,11 @@ runtime/   Task<T>、promise、scheduler、spawn、sync_wait、async_event、thr
 2. `accept_loop()` 协程被 resume，`co_await acceptor_.accept()` 返回新 fd。
 3. 创建 `session`，`spawn()` 把它的 `run()` 协程排到循环上。
 4. `session::read_request()`：
-   - 缓冲区为空，`co_await socket_.read_some()`；`recv` 返回 `EAGAIN`，
-   - 向事件循环注册一次性的可读兴趣，协程挂起（帧停在 `await_suspend` 处）。
-5. 数据到达，`poll` 报告可读，循环取出登记的句柄并 `resume()`。
+   - 缓冲区为空，`co_await socket_.read_some()`；
+   - readiness 引擎：`recv` 返回 `EAGAIN`，向事件循环登记一次性的可读兴趣；
+     io_uring 引擎：提交一个读操作（一个 SQE）；
+   - 协程挂起（帧停在 `await_suspend` 处）。
+5. 数据到达：`poll` 报告可读，或 CQE 落进完成队列；事件循环取出对应的句柄并 `resume()`。
 6. `read_some` 重试 `recv`，拿到字节；`parse_request_head()` 返回 `complete`。
 7. `co_await routes_.dispatch(std::move(req))`：路由协程匹配到 handler，
    对称转移进 handler；handler `co_return` 一个 response，对称转移回来。

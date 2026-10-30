@@ -152,6 +152,26 @@ bool ready = co_await loop_.readable(fd, deadline);
 `socket::read_some()` 拿到 `false` 后还会再试一次 `recv`：数据可能在截止瞬间到达，
 不该因为「醒来晚了一微秒」就判超时。
 
+## 完成引擎：io_uring
+
+就绪模型是「等 fd 可读，然后自己 syscall」；完成模型是「提交操作，等 CQE」。
+
+```cpp
+co_await engine.read_some(fd, buffer, deadline);
+```
+
+- `await_suspend` 里取一个 SQE、`io_uring_prep_recv`、把 `user_data` 记成操作 id，然后挂起；
+- 有 deadline 时再提交一个 `IORING_OP_TIMEOUT`，两个操作共享同一份状态（还剩几个 CQE、
+  谁先完成、结果是什么）；
+- 第一个完成的操作决定结果并取消另一个（`IORING_OP_ASYNC_CANCEL`）；
+  两个 CQE 都收割完之后才 `push_ready` 恢复协程；
+- 缓冲区要活到 CQE 到达：它属于挂起的调用方协程帧，天然满足；
+- `socket::close()` 先 `cancel(fd)` 再关 fd，否则可能在关闭后还有完成写回旧缓冲区。
+
+这里踩过一个坑：引擎的 `wait()` 收割完 CQE 后如果继续阻塞等下一个事件，
+刚刚 `push_ready` 的协程就会一直躺在 ready 队列里没人执行。规则是
+**本轮处理过完成就立即返回**，把控制权交回事件循环。
+
 ## 启动一个顶层协程：spawn
 
 `spawn(scheduler&, task<void>, OnDone)` 用一个「分离的驱动协程」跑任务：

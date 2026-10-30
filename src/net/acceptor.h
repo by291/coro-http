@@ -6,6 +6,7 @@
 #include <system_error>
 
 #include "net/event_loop.h"
+#include "net/io_engine.h"
 #include "runtime/task.h"
 
 namespace coro_http {
@@ -29,7 +30,7 @@ public:
   [[nodiscard]] bool is_open() const { return fd_ >= 0; }
 
 private:
-  event_loop& loop_;
+  io_engine& engine_;
   int fd_{-1};
   std::uint16_t port_{0};
 };

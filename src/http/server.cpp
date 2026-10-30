@@ -10,6 +10,7 @@ namespace coro_http {
 
 server::server(server_config config)
     : config_(std::move(config)),
+      loop_(config_.backend),
       pool_(config_.workers, config_.worker_capacity),
       stop_event_(loop_),
       acceptor_(loop_, config_.host, config_.port) {}
@@ -42,9 +43,8 @@ void server::run() {
 }
 
 void server::request_stop() {
-  if (!running_.load()) {
-    return;
-  }
+  // Safe before run() (the watcher sees the already-set event), during it,
+  // and after it (the event is idempotent and has no waiters by then).
   stop_event_.set();
 }
 

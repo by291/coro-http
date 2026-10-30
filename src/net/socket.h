@@ -1,26 +1,25 @@
 #pragma once
 
 #include <chrono>
-#include <coroutine>
 #include <expected>
 #include <span>
 #include <string_view>
 #include <system_error>
 
-#include "net/event_loop.h"
+#include "net/io_engine.h"
 #include "runtime/task.h"
 
 namespace coro_http {
 
-// A non-blocking TCP socket whose IO reads like synchronous code:
+// A TCP socket whose IO reads like synchronous code:
 //
 //   auto n = co_await socket.read_some(buffer);
 //
-// Under the hood each EAGAIN turns into a one-shot registration with the event
-// loop, and the coroutine parks until the fd is ready.
+// The socket owns the fd and forwards operations to the io_engine, so the
+// same call site works over epoll/kqueue readiness or io_uring completions.
 class stream_socket {
 public:
-  stream_socket(event_loop& loop, int fd);
+  stream_socket(io_engine& engine, int fd);
   ~stream_socket();
 
   stream_socket(stream_socket&& other) noexcept;
@@ -32,6 +31,7 @@ public:
   [[nodiscard]] int fd() const { return fd_; }
   [[nodiscard]] bool is_open() const { return fd_ >= 0; }
 
+  // Cancels whatever is pending on the fd, then closes it.
   void close();
 
   // Half-close so a parked reader sees EOF while writes still work.
@@ -40,14 +40,14 @@ public:
   // 0 means the peer closed the connection.
   [[nodiscard]] task<std::expected<std::size_t, std::error_code>> read_some(
       std::span<char> buffer,
-      event_loop::clock::time_point deadline = event_loop::clock::time_point::max());
+      io_engine::clock::time_point deadline = io_engine::clock::time_point::max());
 
   [[nodiscard]] task<std::expected<void, std::error_code>> write_all(
       std::string_view data,
-      event_loop::clock::time_point deadline = event_loop::clock::time_point::max());
+      io_engine::clock::time_point deadline = io_engine::clock::time_point::max());
 
 private:
-  event_loop* loop_;
+  io_engine* engine_;
   int fd_;
 };
 
